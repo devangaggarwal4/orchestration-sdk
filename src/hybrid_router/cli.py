@@ -159,5 +159,105 @@ async def _smoke_one(backend: Backend) -> tuple[list[str], list[str]]:
     return cells, problems
 
 
+@app.command("eval")
+def eval_cmd(
+    config: ConfigOpt = None,
+    strategies: Annotated[
+        str, typer.Option(help="Comma-separated: hybrid,pre_route,cascade,all_local,all_cloud")
+    ] = "hybrid,pre_route,cascade,all_local,all_cloud",
+    simulate: Annotated[
+        bool, typer.Option(help="Use simulated tiers (no models, no cost).")
+    ] = False,
+    budget_usd: Annotated[float, typer.Option(help="Stop cloud spending past this.")] = 2.0,
+    tasks_file: Annotated[Path | None, typer.Option("--tasks", help="Custom tasks.yaml")] = None,
+    only: Annotated[str | None, typer.Option(help="Comma-separated task ids")] = None,
+    repeat: Annotated[int, typer.Option(min=1)] = 1,
+    db: Annotated[Path, typer.Option(help="Separate telemetry DB for eval runs")] = Path(
+        "evals.sqlite"
+    ),
+    json_out: Annotated[Path | None, typer.Option("--json", help="Write full report")] = None,
+) -> None:
+    """Run the labeled tasks under several strategies and compare them."""
+    import json as _json
+
+    from hybrid_router.evals import ALL_STRATEGIES, load_tasks, run_evals
+
+    cfg = load_config(config)
+    chosen = [s.strip() for s in strategies.split(",") if s.strip()]
+    bad = [s for s in chosen if s not in ALL_STRATEGIES]
+    if bad:
+        raise typer.BadParameter(f"unknown strategies: {bad}")
+    tasks = load_tasks(tasks_file)
+    if only:
+        wanted = {t.strip() for t in only.split(",")}
+        tasks = [t for t in tasks if t.id in wanted]
+    total = len(tasks) * len(chosen) * repeat
+    done = 0
+
+    def progress(r) -> None:
+        nonlocal done
+        done += 1
+        mark = "[green]✓[/]" if r.passed else ("[yellow]-[/]" if r.skipped else "[red]✗[/]")
+        console.print(
+            f"[dim]{done:>3}/{total}[/] {mark} {r.strategy:<9} {r.task_id:<24} "
+            f"{'>'.join(r.tiers) or '-':<22} ${r.cost_usd:.4f}",
+            highlight=False,
+        )
+
+    report = asyncio.run(
+        run_evals(
+            cfg,
+            strategies=chosen,  # type: ignore[arg-type]
+            tasks=tasks,
+            simulate=simulate,
+            budget_usd=budget_usd,
+            db_path=db,
+            repeat=repeat,
+            on_result=progress,
+        )
+    )
+    table = Table(title=f"eval {report.run_id}" + (" (simulated)" if simulate else ""))
+    for col in (
+        "strategy",
+        "pass",
+        "easy/med/hard",
+        "local",
+        "routing acc",
+        "under/over",
+        "cost",
+        "all-cloud",
+        "savings",
+        "p50 / p95",
+        "cascade waste",
+    ):
+        table.add_column(col)
+    for s in report.summaries:
+        diff = "/".join(f"{s.pass_by_difficulty.get(d, 0):.0%}" for d in ("easy", "medium", "hard"))
+        table.add_row(
+            s.strategy,
+            f"{s.pass_rate:.0%}",
+            diff,
+            f"{s.local_share:.0%}",
+            f"{s.routing_accuracy:.0%}" if s.routing_accuracy is not None else "-",
+            f"{s.under_escalations}/{s.over_escalations}",
+            f"${s.cost_usd:.4f}",
+            f"${s.counterfactual_usd:.4f}",
+            f"${s.savings_usd:.4f}",
+            f"{s.latency_p50_ms / 1000:.1f}s / {s.latency_p95_ms / 1000:.1f}s",
+            f"{s.waste_latency_ms / 1000:.1f}s, {s.waste_tokens} tok",
+        )
+    console.print(table)
+    if report.summaries:
+        console.print(
+            f"[dim]routing accuracy vs {report.summaries[0].label_source}; under = served "
+            "locally but failed, over = sent to cloud though local would have passed[/]"
+        )
+    if report.budget_exhausted:
+        console.print(f"[yellow]budget of ${budget_usd} exhausted; remaining tasks skipped[/]")
+    if json_out:
+        json_out.write_text(_json.dumps(report.as_dict(), indent=2))
+        console.print(f"wrote {json_out}")
+
+
 if __name__ == "__main__":
     app()

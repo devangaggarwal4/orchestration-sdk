@@ -46,6 +46,7 @@ class Reply:
         usage: Usage | None = None,
         cost: float | None = None,
         latency_s: float = 0.0,
+        reported_latency_ms: float | None = None,
     ):
         self.text = text
         self.tool_calls = [
@@ -59,6 +60,8 @@ class Reply:
         self.usage = usage
         self.cost = cost
         self.latency_s = latency_s
+        # Latency to report without actually sleeping (simulations).
+        self.reported_latency_ms = reported_latency_ms
 
 
 Step = Reply | BackendError | str
@@ -139,8 +142,12 @@ class ScriptedBackend(Backend):
                 model=self.model,
                 backend=self.name,
                 tier=self.tier,
-                latency_ms=reply.latency_s * 1000 + 1.0,
-                ttft_ms=0.5,
+                latency_ms=(
+                    reply.reported_latency_ms
+                    if reply.reported_latency_ms is not None
+                    else reply.latency_s * 1000 + 1.0
+                ),
+                ttft_ms=(reply.reported_latency_ms or 2.0) / 4,
                 token_logprobs=(reply.logprobs if (logprobs and self._logprobs) else None),
                 reported_cost_usd=reply.cost,
             )
