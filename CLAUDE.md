@@ -5,7 +5,8 @@ A Python SDK that sends LLM calls to a local model (Ollama) when it can and esca
 ## Commands
 
 ```bash
-uv sync --extra web                      # install (dev group included)
+./scripts/setup.sh                       # first-time setup: checks tools, uv sync --extra web, builds the UI
+uv sync --extra web                      # Python deps only (dev group included)
 ./scripts/check.sh                       # the commit gate: ruff format/lint, pyright, pytest, frontend lint/types/tests
 uv run pytest -m integration             # live tests: needs Ollama + OPENROUTER_API_KEY
 uv run hybrid-router smoke [--skip-cloud]
@@ -56,7 +57,7 @@ cd frontend && pnpm gen:api              # after changing any API/event model
 
 ## Conventions
 
-- Python 3.11+, uv, src layout. Use pydantic v2 for every config and data model, with `extra="forbid"` on configs.
+- Python 3.11+ (3.12 pinned in `.python-version`), uv, src layout. Node 20.19+/22.12+ and pnpm 10 (`packageManager` in `frontend/package.json`) for the UI. The README's setup section is the user-facing install guide: keep it, `scripts/setup.sh` and its troubleshooting table in sync with the code's error messages. Use pydantic v2 for every config and data model, with `extra="forbid"` on configs.
 - **Nothing outside `backends/` sees a wire format.** The router must never import a concrete backend; it gets one from `create_backend(config, tier=...)`.
 - **New runtimes** (llama.cpp, MLX, NPU) get their own `Backend` and `BackendConfig` subclasses, registered with `@register_backend` or the `hybrid_router.backends` entry-point group. No router changes.
 - **No hardcoded model names or prices** outside the config defaults in `config.py`, the per-backend config defaults, `hybrid_router.example.yaml` and `pricing.yaml`.
