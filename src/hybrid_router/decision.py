@@ -6,7 +6,7 @@ import uuid
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from hybrid_router.types import (
     CompletionResponse,
@@ -98,10 +98,12 @@ class RouteDecision(BaseModel):
     total_latency_ms: float = 0.0
     config_hash: str = ""
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def tiers_attempted(self) -> list[Tier]:
         return [a.tier for a in self.attempts]
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def escalated(self) -> bool:
         return any(a.role == "escalation" for a in self.attempts)

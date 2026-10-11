@@ -35,6 +35,9 @@ def workspace(tmp_path):
     (tmp_path / "app.py").write_text("def handler():\n    return 42\n")
     (tmp_path / "notes.md").write_text("handler returns the answer\n")
     (tmp_path / ".secret").write_text("token")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "app.cpython-313.pyc").write_bytes(b"\0handler\0")
+    (tmp_path / "blob.bin").write_bytes(b"handler\0\x01")
     return tmp_path
 
 

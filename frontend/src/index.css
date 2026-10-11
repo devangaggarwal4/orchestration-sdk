@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/* Tokens. Chart values come from the validated reference palette (dataviz skill):
+   series slots are keyed by entity (local / sonnet / opus / outcome), never by rank. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ee;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --accent: #2a78d6;
+  --accent-ink: #ffffff;
+  --success-text: #006300;
+
+  --tier-local: #2a78d6;
+  --tier-sonnet: #eb6834;
+  --tier-opus: #1baf7a;
+  --outcome-escalated: #6250d6;
+  --ord-light: #86b6ef; /* p50 */
+  --ord-dark: #256abf; /* p95 */
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --accent: #3987e5;
+    --success-text: #0ca30c;
+    --tier-local: #3987e5;
+    --tier-sonnet: #d95926;
+    --tier-opus: #199e70;
+    --outcome-escalated: #9085e9;
+    --ord-light: #86b6ef;
+    --ord-dark: #2a78d6;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #232321;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --accent: #3987e5;
+  --success-text: #0ca30c;
+  --tier-local: #3987e5;
+  --tier-sonnet: #d95926;
+  --tier-opus: #199e70;
+  --outcome-escalated: #9085e9;
+  --ord-light: #86b6ef;
+  --ord-dark: #2a78d6;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-local: var(--tier-local);
+  --color-sonnet: var(--tier-sonnet);
+  --color-opus: var(--tier-opus);
+  --color-good: var(--status-good);
+  --color-warn: var(--status-warning);
+  --color-bad: var(--status-critical);
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+/* Model and tool output can contain long unbroken strings. */
+pre,
+.whitespace-pre-wrap {
+  overflow-wrap: anywhere;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}

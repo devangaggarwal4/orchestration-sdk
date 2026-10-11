@@ -37,6 +37,16 @@ SYSTEM = (
 
 MAX_READ_CHARS = 20_000
 MAX_RESULT_CHARS = 8_000
+MAX_SEARCH_BYTES = 1_000_000
+SKIP_DIRS = {"__pycache__", "node_modules", "dist", "build", "venv", "site-packages"}
+
+
+def _is_binary(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            return b"\0" in f.read(8192)
+    except OSError:
+        return True
 
 
 # --- tools ----------------------------------------------------------------------
@@ -86,7 +96,10 @@ def workspace_tools(
             if len(hits) >= 50:
                 break
             rel = path.relative_to(root).as_posix()
-            if not path.is_file() or any(p.startswith(".") for p in path.relative_to(root).parts):
+            parts = path.relative_to(root).parts
+            if not path.is_file() or any(p.startswith(".") or p in SKIP_DIRS for p in parts):
+                continue
+            if path.stat().st_size > MAX_SEARCH_BYTES or _is_binary(path):
                 continue
             if not fnmatch.fnmatch(path.name, glob) and not fnmatch.fnmatch(rel, glob):
                 continue
