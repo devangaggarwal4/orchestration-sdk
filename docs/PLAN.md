@@ -10,6 +10,8 @@ Status: **draft, awaiting approval**. No code is written until this plan is appr
 | Counterfactual baseline | Every route priced as if sent to one configurable baseline model, default = the Sonnet tier. |
 | Counterfactual tokens | Local token counts × a calibrated ratio learned from escalated routes (where we have both local and Claude counts). Falls back to `token_ratio_default` (1.15) until there are ≥ 20 samples. |
 | API style | Async core (`await router.acomplete(...)`, `router.astream(...)`) with a sync wrapper (`router.complete(...)`). |
+| Web app | Full orchestration web app (see §10): chat playground, live agent runs, live config tuning with what-if replay, side-by-side strategy compare + eval launcher, and the telemetry dashboard. FastAPI backend, React + Vite + TypeScript frontend shipped as built static assets inside the Python package. |
+| Web deployment | Single user, reachable on LAN / tailnet. Bearer-token auth, required whenever bound to a non-loopback address. |
 
 ## 1. Defaults I picked (tell me to change any)
 
@@ -19,7 +21,7 @@ Status: **draft, awaiting approval**. No code is written until this plan is appr
 4. **Counterfactual caching**: for local routes we assume the *observed* cloud cache-read ratio for that session (falls back to 0). Without this, agent loops (which resend a growing prefix) would massively overstate savings. Configurable: `counterfactual.cache_assumption: observed | none`.
 5. **Pure pre-route** = tier picked from score only, no validation-based escalation. Structural errors (timeout/exception) still fall back to Sonnet, behind `pre_route.fallback_on_error: true`, because a crashed call isn't a routing result.
 6. **Pure cascade** = always try local first, ignore the score for tier choice (score is still computed and logged), full validator chain.
-7. **Dashboard** = `hybrid-router dashboard` starts a stdlib `http.server` on localhost serving one HTML file + JSON endpoints backed by the same query layer as `report`. Chart.js loaded from a pinned CDN URL. No Node build step.
+7. **Dashboard** is a page of the web app (§10), not a separate server. It uses the same query layer as `report`. Charts use Recharts, bundled with the frontend so nothing is loaded from a CDN (works offline on the tailnet).
 8. **CLI** = `typer` + `rich`.
 9. **Scorer token count** uses a fast char-based estimator (no tokenizer call) so scoring stays in single-digit ms. Exact counts are recorded post-hoc from backend responses.
 10. **Default Claude model IDs** in config: `claude-sonnet-5-5` (sonnet tier), `claude-opus-5-5` (opus tier). Change in `hybrid_router.yaml`.
@@ -72,11 +74,18 @@ orchestration-sdk/
 │   ├── reporting/
 │   │   ├── report.py
 │   │   ├── tune.py
-│   │   └── dashboard/ (server.py, index.html)
+│   │   └── whatif.py         # replay stored routes under a candidate config
+│   ├── web/
+│   │   ├── app.py            # FastAPI app factory
+│   │   ├── auth.py           # bearer token dependency
+│   │   ├── routes/           # chat.py, agents.py, config.py, compare.py, evals.py, stats.py
+│   │   ├── runs.py           # background agent/compare/eval runs + SSE event bus
+│   │   └── static/           # built frontend (generated, git-ignored, included in wheel)
 │   ├── adapters/
 │   │   ├── langgraph.py      # thin chat-model wrapper (optional import)
 │   │   └── claude_agent_sdk.md  # how to plug in (see §9)
-│   └── cli.py                # hybrid-router report|tune|dashboard|eval|smoke
+│   └── cli.py                # hybrid-router report|tune|web|eval|smoke|serve
+├── frontend/                 # React + Vite + TS source (pnpm); `pnpm build` -> src/hybrid_router/web/static
 ├── examples/agent/           # example agent with 3 tools
 ├── evals/
 │   ├── tasks.yaml            # ~30 labeled tasks
@@ -227,7 +236,7 @@ Unknown model → cost recorded as NULL with a warning (never silently $0). Repo
   - cost actual/counterfactual, latency p50/p95, cascade waste
 - Hard budget cap aborts cloud calls once exceeded.
 
-## 8. Phase 5 — CLI report/tune, dashboard
+## 8. Phase 5 — CLI report and tune
 
 **`hybrid-router report --since 7d [--db path] [--json]`**: % calls and % tokens local vs cloud; actual vs counterfactual cost and savings (abs and %); cost and latency by zone; escalation rate by task_type; top escalation reasons (validator name + reason); cascade waste; p50/p95 latency per tier; token ratio used and sample count.
 
@@ -237,10 +246,11 @@ Unknown model → cost recorded as NULL with a warning (never silently $0). Repo
 - For each suggestion, replay telemetry: est. latency saved (waste removed by skipping local in newly-HARD bins), cost delta (cloud cost added for routes moved to cloud, incl. ones that would have succeeded locally), quality risk (local failures moved into EASY).
 - Weight suggestions: logistic regression on stored features → escalated (uses sklearn if `[learned]` installed, else a small numpy-free gradient fit), reported as normalized weights next to current ones.
 - Prints a suggested YAML patch; never edits config itself. Refuses to suggest with < 50 routes in a zone.
+- `tune` returns structured suggestions (pydantic models), so the web app's tuning page renders and applies the same output.
 
-**`hybrid-router dashboard --port 8765`**: localhost-only; charts: local/cloud split over time, cost vs counterfactual cumulative, cost and latency by zone, escalation rate by task_type, score histogram colored by outcome, latency p50/p95 per tier, cascade waste.
+**What-if replay** (`reporting/whatif.py`, shared by `tune` and the web app): every route stores its feature vector, so a candidate config (thresholds or weights) can re-score and re-zone past routes without any model calls. The output is the new zone mix, the routes that would change tier, and estimated cost, latency and quality-risk deltas. Each estimate is labelled with its basis: observed when the route actually ran at that tier, estimated otherwise.
 
-## 9. Phase 6 — Example agent, scorer stubs, README
+## 9. Phase 6 — Example agent, adapters, scorer stubs
 
 - `examples/agent/`: a "repo assistant" agent loop with 3 tools (`read_file`, `search_text`, `run_python` in a subprocess with timeout), using `HybridRouter` as its model provider with `session_id` per run, tagging steps with `task_type`.
 - **Adapters**:
@@ -248,26 +258,99 @@ Unknown model → cost recorded as NULL with a warning (never silently $0). Repo
   - Claude Agent SDK: the SDK drives the Claude Code runtime and expects Anthropic Messages endpoints, so the clean seam is a **local Anthropic-compatible proxy** (`hybrid-router serve`, implements `POST /v1/messages` incl. streaming) and pointing `ANTHROPIC_BASE_URL` at it. I'll scope this as a documented design + minimal non-streaming proxy in phase 6, full streaming proxy as follow-up. **Please confirm this is acceptable.**
 - `EmbeddingScorer` stub: interface, embedding via Ollama `/api/embed`, in-memory kNN over stored route embeddings (new `embeddings` table), score = fraction of k neighbors escalated; marked experimental.
 - `LearnedScorer` stub: trains on `features` + `local_succeeded`, persists with joblib, `hybrid-router train-scorer`.
-- README: `ollama pull qwen3:8b`, `ollama pull nomic-embed-text`, `uv sync`, `ANTHROPIC_API_KEY`, config walkthrough, mermaid diagram (request → scorer → zone → strategy → backends → validators → telemetry → report/tune/dashboard), tuning guide.
+- README (written in phase 8, drafted earlier as phases land): `ollama pull qwen3:8b`, `ollama pull nomic-embed-text`, `uv sync`, `ANTHROPIC_API_KEY`, config walkthrough, mermaid diagram (request → scorer → zone → strategy → backends → validators → telemetry → report/tune/dashboard), tuning guide.
 
-## 10. Engineering conventions (→ CLAUDE.md)
+## 10. Phase 7–8 — Orchestration web app
 
-Python 3.11+, uv, src layout, pydantic v2 for all config and data models, `ruff` (lint + format), `pyright` basic, pytest + `pytest-asyncio`. No network in unit tests (`ScriptedBackend`). Integration tests in `tests/integration/`, auto-skipped unless Ollama responds at the configured URL **and** `ANTHROPIC_API_KEY` is set. No hardcoded model names or prices outside example config / pricing.yaml. Router never imports a concrete backend. Every routing decision is explainable via `reasons`. Each phase ends with a stop for review.
+`hybrid-router web [--host 127.0.0.1] [--port 8765] [--fake-backends]` starts a single FastAPI process. It serves the API and the built React app, and it owns one shared `HybridRouter`, so all telemetry lands in the same SQLite DB as SDK and CLI usage.
 
-## 11. Risks / things to watch
+### Pages
+1. **Chat playground**
+   - A streaming chat that goes through the router. You can pick the strategy, `task_type` and `force_tier`, and toggle the example tools.
+   - Each assistant turn has a route card showing tier badge, score with a per-feature breakdown, zone, reasons, attempts (including discarded local drafts, expandable), validator results, tokens, latency/TTFT, actual vs counterfactual cost.
+   - Conversations are persisted, and each one is one router `session_id`, so stickiness is visible as you chat.
+2. **Agent runs**
+   - Start the example agent (or any agent registered in config) on a task.
+   - A live step timeline shows each step's tier, score, tool calls and results, escalations, and the running cost against the counterfactual.
+   - Runs can be cancelled, and past runs can be replayed from telemetry.
+3. **Compare**
+   - Send one prompt (or one eval task) under several strategies (hybrid / pre_route / cascade / all_local / all_cloud) and see the outputs side by side with cost, latency and the eval check's pass/fail.
+   - From the same page you can launch full eval runs, which show progress and then the comparison table from §7.
+4. **Tuning**
+   - Sliders for the thresholds and inputs for feature weights, stickiness and model per tier.
+   - What-if replay against the last N days updates as you drag.
+   - `tune` suggestions appear as one-click "apply to draft" changes.
+   - Applying a draft validates it, writes `hybrid_router.yaml` (the previous version is kept as a timestamped backup and the change is shown as a diff first), and hot-swaps the router's config. Requests already in flight finish on the old config.
+5. **Dashboard**: every `report` view as charts, with a time-range picker.
+   - Local vs cloud split over time.
+   - Cumulative cost vs counterfactual.
+   - Cost and latency by zone.
+   - Escalation rate by task_type.
+   - Score histogram coloured by outcome.
+   - p50/p95 latency per tier, and cascade waste.
+   - Top escalation reasons.
+   - A header strip shows Ollama/Anthropic health and the loaded models.
+
+### API sketch
+- `POST /api/chat/{conversation_id}/messages`: SSE stream of `StreamEvent`s, ending with a `route_decision` event. Also `GET/POST/DELETE /api/conversations`.
+- `POST /api/runs`: start an agent, compare or eval run, returns `run_id`.
+  - `GET /api/runs/{id}/events` streams the run's events over SSE.
+  - `POST /api/runs/{id}/cancel`.
+- `GET /api/config`, `POST /api/config/validate`, `POST /api/config/whatif`, `PUT /api/config` (apply).
+- `GET /api/tune/suggestions`; `GET /api/stats/*` (the report queries); `GET /api/health`.
+- OpenAPI types are generated into the frontend (`openapi-typescript`) so the TypeScript and pydantic models can't drift.
+
+### New storage
+The same SQLite DB gets three new tables:
+- `conversations` and `conversation_messages` (chat history).
+- `runs`: kind, status, config snapshot hash, and summary. Agent steps link to `routes` via `session_id` = run_id.
+
+Every route also records `config_hash`, so the dashboard can split metrics before and after a tuning change.
+
+### Concurrency
+A 16 GB Mac can serve only one local generation well at a time. Local backends therefore sit behind a configurable semaphore (default 1), and queued local calls show a "waiting for local model" state in the UI. Queue wait is recorded separately from model latency so it doesn't skew routing stats. Compare runs execute the local legs one after another and the cloud legs in parallel.
+
+### Security (LAN / tailnet)
+- The server binds `127.0.0.1` by default. A non-loopback `--host` refuses to start unless `HYBRID_ROUTER_WEB_TOKEN` is set. The SPA asks for the token once and keeps it in localStorage.
+- No CORS. The frontend is same-origin.
+- `ANTHROPIC_API_KEY` stays server-side and is never returned by `/api/config`.
+- The example agent's `run_python` tool is remote code execution if exposed. It is disabled by default in the web app, needs `agent.allow_code_exec: true`, and runs in a subprocess with a timeout, a temp working directory and no inherited env.
+- Spend guard: a configurable daily cloud budget, plus a per-run cap for compare and eval runs. When a budget is hit, cloud tiers are blocked and the UI says so.
+- The README recommends `tailscale serve` for HTTPS rather than building TLS into the app.
+
+### Frontend stack
+- React 18, Vite and TypeScript, with TanStack Query for data fetching.
+- Recharts for charts, and Tailwind for styling.
+- A small SSE helper with auto-reconnect handles streaming.
+- pnpm for development only. The wheel ships the built assets, so end users need no Node.
+
+### Testing
+- API: pytest + httpx `AsyncClient` against the app wired to `ScriptedBackend`s. This covers SSE event order, auth enforcement, config apply/rollback, and budget blocking.
+- Frontend: Vitest for components such as the route card and what-if math display.
+- End to end: one Playwright test against `hybrid-router web --fake-backends`, using the pre-installed Chromium. It covers sending a chat message, seeing an escalation route card, and moving a threshold slider to watch the what-if update.
+
+## 11. Engineering conventions (→ CLAUDE.md)
+
+Python 3.11+, uv, src layout, pydantic v2 for all config and data models, `ruff` (lint + format), `pyright` basic, pytest + `pytest-asyncio`. No network in unit tests (`ScriptedBackend`). Integration tests in `tests/integration/`, auto-skipped unless Ollama responds at the configured URL **and** `ANTHROPIC_API_KEY` is set. No hardcoded model names or prices outside example config / pricing.yaml. Router never imports a concrete backend. Every routing decision is explainable via `reasons`. Frontend: TypeScript strict, API types generated from OpenAPI (never hand-written), `pnpm lint && pnpm test` must pass; built assets are not committed. Each phase ends with a stop for review.
+
+## 12. Risks / things to watch
 
 - `qwen3:8b` tool-calling reliability is mediocre on multi-tool tasks; expect higher escalation in agent steps until thresholds are tuned. The validators (unknown tool, schema-invalid input) are the main guard.
 - Logprobs support depends on your Ollama version; confidence validation silently degrades to skipped (logged).
 - Memory pressure on 16 GB (model + IDE + browser) can cause slow first tokens; local timeout and `keep_alive` are configurable, and timeouts escalate as hard failures.
+- Web app scope roughly doubles the project; the SDK stays fully usable without it (`web` is an optional extra: `uv sync --extra web`), and phases 1–6 don't depend on it.
+- Hot-swapping config mid-session changes routing for in-flight agent runs on their *next* step; runs record the config hash per step so this is visible.
 - Counterfactual is an estimate; reports label it as such and show the token ratio and sample size.
 
-## 12. Build order and review gates
+## 13. Build order and review gates
 
 1. Backends + smoke test → **stop**
 2. Scoring, zones, validators, strategies + unit tests → **stop**
 3. Telemetry, pricing, cost/counterfactual → **stop**
 4. Eval harness → **stop**
-5. CLI report/tune, then dashboard → **stop**
-6. Example agent, adapters, scorer stubs, README, CLAUDE.md finalized → **stop**
+5. CLI report/tune + what-if replay → **stop**
+6. Example agent, adapters, Embedding/Learned scorer stubs → **stop**
+7. Web app, part 1: FastAPI API (auth, SSE, conversations, runs, config apply, stats), frontend scaffold, **Chat playground** and **Dashboard** pages → **stop**
+8. Web app, part 2: **Agent runs**, **Compare + eval launcher** and **Tuning** pages, Playwright e2e test, final README (setup, web app, mermaid diagram, tuning guide) → **stop**
 
 (CLAUDE.md is created in phase 1 and updated each phase.)
