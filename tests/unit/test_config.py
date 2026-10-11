@@ -1,9 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
-from hybrid_router.backends.anthropic import AnthropicConfig
 from hybrid_router.backends.base import Backend, BackendConfig
 from hybrid_router.backends.ollama import OllamaConfig
+from hybrid_router.backends.openai_compat import OpenAICompatConfig
 from hybrid_router.backends.registry import create_backend, register_backend
 from hybrid_router.config import env_overrides, load_config
 from hybrid_router.types import Tier
@@ -19,8 +19,13 @@ def test_defaults_without_a_file():
     cfg = load_config(environ={})
     assert isinstance(cfg.tiers[Tier.LOCAL], OllamaConfig)
     assert cfg.tiers[Tier.LOCAL].model == "qwen3:8b"
-    assert isinstance(cfg.tiers[Tier.SONNET], AnthropicConfig)
-    assert cfg.tiers[Tier.OPUS].model == "claude-opus-5-5"
+    sonnet, opus = cfg.tiers[Tier.SONNET], cfg.tiers[Tier.OPUS]
+    assert isinstance(sonnet, OpenAICompatConfig) and isinstance(opus, OpenAICompatConfig)
+    assert sonnet.model == "anthropic/claude-sonnet-5.5"
+    assert opus.model == "anthropic/claude-opus-5.5"
+    assert sonnet.base_url == "https://openrouter.ai/api/v1"
+    # Claude 5.5 rejects these, so the Claude tiers ship with them off.
+    assert not sonnet.sampling_params and not opus.forced_tool_choice
 
 
 def test_file_merges_over_defaults(tmp_path):
@@ -37,9 +42,13 @@ def test_file_merges_over_defaults(tmp_path):
 
 
 def test_default_file_in_cwd_is_picked_up(tmp_path):
-    (tmp_path / "hybrid_router.yaml").write_text("tiers:\n  sonnet:\n    effort: medium\n")
+    (tmp_path / "hybrid_router.yaml").write_text(
+        "tiers:\n  sonnet:\n    reasoning: {effort: medium}\n"
+    )
     sonnet = load_config(environ={}).tiers[Tier.SONNET]
-    assert isinstance(sonnet, AnthropicConfig) and sonnet.effort == "medium"
+    assert isinstance(sonnet, OpenAICompatConfig)
+    assert sonnet.reasoning == {"effort": "medium"}
+    assert not sonnet.sampling_params  # defaults for the tier are kept
 
 
 def test_env_overrides_are_typed_and_win(tmp_path):

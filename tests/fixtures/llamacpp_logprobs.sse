@@ -1,0 +1,8 @@
+data: {"id":"c1","model":"qwen3-8b","choices":[{"index":0,"delta":{"content":"po"},"logprobs":{"content":[{"token":"po","logprob":-0.2}]},"finish_reason":null}]}
+
+data: {"id":"c1","model":"qwen3-8b","choices":[{"index":0,"delta":{"content":"ng"},"logprobs":{"content":[{"token":"ng","logprob":-0.4}]},"finish_reason":"length"}]}
+
+data: {"id":"c1","model":"qwen3-8b","choices":[],"usage":{"prompt_tokens":15,"completion_tokens":2,"total_tokens":17}}
+
+data: [DONE]
+

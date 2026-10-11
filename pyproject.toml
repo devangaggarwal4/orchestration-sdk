@@ -1,12 +1,12 @@
 [project]
 name = "hybrid-router"
 version = "0.1.0"
-description = "Route LLM calls between local models (Ollama) and Claude, with telemetry and cost tracking."
+description = "Route LLM calls between local models (Ollama) and Claude via OpenRouter, with telemetry and cost tracking."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-    "anthropic>=1.13",
+    "httpx2>=2.13",
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "typer>=0.12",
@@ -18,7 +18,7 @@ hybrid-router = "hybrid_router.cli:app"
 
 [project.entry-points."hybrid_router.backends"]
 ollama = "hybrid_router.backends.ollama:OllamaBackend"
-anthropic = "hybrid_router.backends.anthropic:AnthropicBackend"
+openai_compat = "hybrid_router.backends.openai_compat:OpenAICompatBackend"
 
 [dependency-groups]
 dev = [
@@ -38,7 +38,7 @@ packages = ["src/hybrid_router"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["integration: needs a running Ollama and ANTHROPIC_API_KEY"]
+markers = ["integration: needs a running Ollama and OPENROUTER_API_KEY"]
 
 [tool.ruff]
 line-length = 100

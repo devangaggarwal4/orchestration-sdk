@@ -38,7 +38,7 @@ def _load_entry_points() -> None:
 
 def _load_builtins() -> None:
     # Imported for their register_backend side effect; works without an installed dist.
-    from hybrid_router.backends import anthropic, ollama  # noqa: F401
+    from hybrid_router.backends import ollama, openai_compat  # noqa: F401
 
 
 def get_backend_class(kind: str) -> type[Backend]:
@@ -58,7 +58,7 @@ def parse_backend_config(data: dict[str, Any] | BackendConfig) -> BackendConfig:
         return data
     kind = data.get("kind")
     if not kind:
-        raise ValueError("backend config needs a 'kind' (e.g. 'ollama' or 'anthropic')")
+        raise ValueError("backend config needs a 'kind' (e.g. 'ollama' or 'openai_compat')")
     return get_backend_class(kind).config_model.model_validate(data)
 
 

@@ -79,7 +79,7 @@ class RedactedThinkingBlock(BaseModel):
 
 
 class OpaqueBlock(BaseModel):
-    """A provider block we don't model (server tool results, fallback markers...).
+    """A provider-specific block we don't model (e.g. OpenRouter ``reasoning_details``).
 
     Kept verbatim so an agent can append ``response.content`` to its history and
     replay it to the same provider without loss. Other backends drop it.
@@ -186,6 +186,9 @@ class CompletionResponse(BaseModel):
     ttft_ms: float | None = None
     # Per-token log probabilities of the generated tokens, when the backend supports them.
     token_logprobs: list[float] | None = None
+    # USD the provider says it charged for this call (OpenRouter's usage.cost).
+    # None when the backend doesn't report cost; pricing.yaml is used then.
+    reported_cost_usd: float | None = None
     # Non-fatal adjustments the backend made to the request (e.g. dropped temperature).
     warnings: list[str] = Field(default_factory=list)
     raw: dict[str, Any] | None = Field(default=None, repr=False)

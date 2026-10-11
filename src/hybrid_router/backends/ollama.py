@@ -2,7 +2,7 @@
 
 We use the raw HTTP API rather than the ``ollama`` package so we get every
 field we route on: ``logprobs``, ``done_reason`` (truncation), token counts and
-``think``. ``anthropic`` already depends on httpx2, so this adds no HTTP stack.
+``think``. Shares the httpx2 stack with the OpenAI-compatible backend.
 """
 
 from __future__ import annotations

@@ -75,7 +75,7 @@ async def _smoke(tier_configs: dict, tiers: list[Tier]) -> bool:
         "health",
         "reply",
         "ttft / total",
-        "tokens in/out",
+        "tokens in/out ($)",
         "tool call",
         "logprobs",
     ):
@@ -127,7 +127,10 @@ async def _smoke_one(backend: Backend) -> tuple[list[str], list[str]]:
     cells.append(("[green]✓[/] " if not problems else "[yellow]?[/] ") + repr(reply[:30]))
     ttft = f"{response.ttft_ms:.0f}" if response.ttft_ms is not None else "-"
     cells.append(f"{ttft} / {response.latency_ms:.0f} ms")
-    cells.append(f"{response.usage.total_input_tokens}/{response.usage.output_tokens}")
+    tokens = f"{response.usage.total_input_tokens}/{response.usage.output_tokens}"
+    if response.reported_cost_usd is not None:
+        tokens += f" (${response.reported_cost_usd:.5f})"
+    cells.append(tokens)
     if response.mean_logprob is not None:
         logprobs = f"mean {response.mean_logprob:.2f}"
     elif backend.capabilities.logprobs:

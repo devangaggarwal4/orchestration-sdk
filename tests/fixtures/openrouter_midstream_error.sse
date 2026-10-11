@@ -1,0 +1,4 @@
+data: {"id":"gen-3","model":"anthropic/claude-sonnet-5.5","choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}
+
+data: {"id":"gen-3","object":"chat.completion.chunk","error":{"code":502,"message":"Provider disconnected"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+

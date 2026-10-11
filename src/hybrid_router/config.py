@@ -31,8 +31,20 @@ DEFAULT_CONFIG_FILE = "hybrid_router.yaml"
 DEFAULTS: dict[str, Any] = {
     "tiers": {
         "local": {"kind": "ollama", "model": "qwen3:8b"},
-        "sonnet": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
-        "opus": {"kind": "anthropic", "model": "claude-opus-5-5"},
+        # Claude via OpenRouter. Claude 5.5 models 400 on temperature and on
+        # forced tool_choice, so both are switched off for these tiers.
+        "sonnet": {
+            "kind": "openai_compat",
+            "model": "anthropic/claude-sonnet-5.5",
+            "sampling_params": False,
+            "forced_tool_choice": False,
+        },
+        "opus": {
+            "kind": "openai_compat",
+            "model": "anthropic/claude-opus-5.5",
+            "sampling_params": False,
+            "forced_tool_choice": False,
+        },
     },
 }
 

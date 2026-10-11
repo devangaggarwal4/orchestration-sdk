@@ -13,6 +13,8 @@ Status: **approved** (2026-10-11). Built phase by phase with a review stop after
 | Web app | Full orchestration web app (see §10): chat playground, live agent runs, live config tuning with what-if replay, side-by-side strategy compare + eval launcher, and the telemetry dashboard. FastAPI backend, React + Vite + TypeScript frontend shipped as built static assets inside the Python package. |
 | Tool errors | Approved: an erroring `tool_result` for a locally-served call raises the next step's score and back-fills `local_succeeded=false` on that call. |
 | Agent integration | Option C: our own agent loop + LangGraph adapter are first-class. Claude Agent SDK gets the supported "router as a tool" pattern (`delegate_local`) in phase 6; the Anthropic-compatible proxy (`hybrid-router serve`, full streaming, exact pass-through) is an experimental extra after phase 8, documented as unsupported by Anthropic. |
+| Cloud provider | Decided 2026-10-11: no Anthropic API key, so the cloud tiers reach Claude through **OpenRouter** with a new `openai_compat` backend (OpenAI-style `/chat/completions`). The `anthropic` backend and dependency were removed. Tiers stay local → sonnet → opus, defaulting to `anthropic/claude-sonnet-5.5` and `anthropic/claude-opus-5.5`. The same backend also serves OpenAI-compatible local runtimes (llama.cpp, LM Studio, vLLM, MLX). |
+| Actual cost | The USD OpenRouter reports per call (`usage.cost`) is the actual cost. `pricing.yaml` is used for the counterfactual and as a fallback when no cost is reported. |
 | Web deployment | Single user, reachable on LAN / tailnet. Bearer-token auth, required whenever bound to a non-loopback address. |
 
 ## 1. Defaults I picked (tell me to change any)
@@ -26,7 +28,7 @@ Status: **approved** (2026-10-11). Built phase by phase with a review stop after
 7. **Dashboard** is a page of the web app (§10), not a separate server. It uses the same query layer as `report`. Charts use Recharts, bundled with the frontend so nothing is loaded from a CDN (works offline on the tailnet).
 8. **CLI** = `typer` + `rich`.
 9. **Scorer token count** uses a fast char-based estimator (no tokenizer call) so scoring stays in single-digit ms. Exact counts are recorded post-hoc from backend responses.
-10. **Default Claude model IDs** in config: `claude-sonnet-5-5` (sonnet tier), `claude-opus-5-5` (opus tier). Change in `hybrid_router.yaml`.
+10. **Default cloud model IDs** in config: `anthropic/claude-sonnet-5.5` (sonnet tier), `anthropic/claude-opus-5.5` (opus tier), via OpenRouter. Change in `hybrid_router.yaml`.
 
 ## 2. Repository layout
 
@@ -36,7 +38,7 @@ orchestration-sdk/
 ├── CLAUDE.md
 ├── README.md
 ├── hybrid_router.example.yaml
-├── pricing.yaml              # placeholder prices, verify on anthropic.com/pricing
+├── pricing.yaml              # placeholder prices for the counterfactual; verify before trusting
 ├── src/hybrid_router/
 │   ├── __init__.py           # HybridRouter, RouteDecision, load_config
 │   ├── types.py              # Message, ContentBlock, ToolSpec, Usage, CompletionRequest/Response, StreamEvent
@@ -46,7 +48,7 @@ orchestration-sdk/
 │   │   ├── base.py           # Backend ABC, BackendCapabilities, BackendError taxonomy
 │   │   ├── registry.py       # kind -> class; entry-point group "hybrid_router.backends"
 │   │   ├── ollama.py
-│   │   └── anthropic.py
+│   │   └── openai_compat.py  # OpenRouter (cloud) and OpenAI-compatible local servers
 │   ├── scoring/
 │   │   ├── base.py           # Scorer protocol, ScoreResult(score, reasons, features)
 │   │   ├── features.py       # feature extraction shared by all scorers
@@ -124,7 +126,7 @@ class Backend(ABC):
     capabilities: BackendCapabilities
     async def generate(self, req: CompletionRequest, *, logprobs=False) -> CompletionResponse
     async def stream(self, req, *, logprobs=False) -> AsyncIterator[StreamEvent]
-    async def count_tokens(self, req) -> int        # exact if supported, else estimate
+    async def count_tokens(self, req) -> int        # estimate (no exact counter for OpenRouter)
     async def health(self) -> bool
     async def aclose(self) -> None
 ```
@@ -132,7 +134,14 @@ Tool calling is part of `generate`/`stream` (tools on the request, `ToolUseBlock
 
 **OllamaBackend**: `/api/chat` with `tools`, `format` (JSON schema when `response_schema` set), `options.num_ctx`, `think`, `logprobs` (feature-detected via `/api/version`; capability is false on older Ollama and the confidence validator then skips). Converts Anthropic-shaped messages/tool results ↔ Ollama's. Truncation from `done_reason == "length"`. Per-call timeout from config (local can hang on a 16 GB machine under memory pressure).
 
-**AnthropicBackend**: official `anthropic` async client; `messages.create` / `messages.stream`; `cache_control` breakpoint on system + last tool definition + last stable message (configurable); `messages.count_tokens` for exact counts; logprobs capability = false.
+**OpenAICompatBackend** (`kind: openai_compat`): raw `httpx2` against `/chat/completions` with SSE streaming. OpenRouter is the default target.
+- Converts our messages to OpenAI format: tool results become `role: tool`, and images become data URLs.
+- Reads `usage.cost` as the reported USD cost, and cached tokens from `prompt_tokens_details`.
+- Keeps OpenRouter `reasoning_details` (Claude thinking) and replays them on later turns. Claude needs this for tool use with reasoning.
+- For Anthropic models, adds `cache_control` breakpoints on the system prompt and the latest message.
+- Claude 5.5 rejects `temperature` and forced `tool_choice`, so the Claude tiers turn both off and the backend records a warning when it drops them.
+- `health()` checks that the configured model id exists in `/models`.
+- With `logprobs: true` and no API key, the same backend drives llama.cpp, LM Studio, vLLM or MLX servers.
 
 **Extensibility**: backends are constructed from config by `kind` via the registry; third parties register through the `hybrid_router.backends` entry-point group. The router only ever sees `Backend` + `tier`, so llama.cpp / MLX / NPU backends need zero router changes. Multiple backends per tier allowed later (ordered fallback).
 
@@ -140,8 +149,8 @@ Tool calling is part of `generate`/`stream` (tools on the request, `ToolUseBlock
 ```yaml
 tiers:
   local:  {kind: ollama,    model: qwen3:8b, base_url: http://localhost:11434, timeout_s: 60, think: false}
-  sonnet: {kind: anthropic, model: claude-sonnet-5-5}
-  opus:   {kind: anthropic, model: claude-opus-5-5}
+  sonnet: {kind: openai_compat, model: anthropic/claude-sonnet-5.5, sampling_params: false, forced_tool_choice: false}
+  opus:   {kind: openai_compat, model: anthropic/claude-opus-5.5, sampling_params: false, forced_tool_choice: false}
 ```
 
 **Deliverables**: types, config, both backends, `hybrid-router smoke` (pings each tier, one plain call + one tool call, prints latency/tokens), unit tests for message/tool conversion with recorded fixtures.
@@ -201,21 +210,23 @@ In-memory `SessionStore` (step counter, stickiness countdown, observed cache rat
 
 **`routes`**: route_id, ts, session_id, step_index, task_type, strategy, score, zone, reasons(JSON), features(JSON), forced, final_tier, final_model, n_attempts, success, total_latency_ms, actual_cost_usd, counterfactual_cost_usd, cf_input_tokens_est, cf_output_tokens_est.
 
-**`calls`**: call_id, route_id, ts, session_id, step_index, task_type, strategy, score, zone, reasons, tier, model, role (`direct | cascade_attempt | escalation`), attempt_index, validator_results(JSON), input/output/cache_read/cache_write tokens, latency_ms, ttft_ms, success, error, wasted (bool: a cascade attempt superseded by an escalation), local_succeeded (nullable, back-filled), actual_cost_usd, counterfactual_cost_usd (= route counterfactual on the final call, 0 on others so `SUM` is correct).
+**`calls`**: call_id, route_id, ts, session_id, step_index, task_type, strategy, score, zone, reasons, tier, model, role (`direct | cascade_attempt | escalation`), attempt_index, validator_results(JSON), input/output/cache_read/cache_write tokens, latency_ms, ttft_ms, success, error, wasted (bool: a cascade attempt superseded by an escalation), local_succeeded (nullable, back-filled), actual_cost_usd, cost_source (`reported | pricing | local`), counterfactual_cost_usd (= route counterfactual on the final call, 0 on others so `SUM` is correct).
 
 Indexes on ts, session_id, route_id. WAL mode; writes happen off the hot path via a background task with a bounded queue (flushed on `aclose`). Telemetry can be disabled.
 
 **`pricing.yaml`**:
 ```yaml
-# PLACEHOLDER PRICES — verify every value at https://www.anthropic.com/pricing before trusting reports.
+# PLACEHOLDER PRICES for the counterfactual — verify each at https://openrouter.ai/models before trusting reports.
+# Actual cost comes from OpenRouter's per-call usage.cost; these are only the fallback.
 currency: USD
 models:
-  claude-sonnet-5-5: {input_per_mtok: 0.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0}
-  claude-opus-5-5:   {input_per_mtok: 0.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0}
+  anthropic/claude-sonnet-5.5: {input_per_mtok: 0.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0}
+  anthropic/claude-opus-5.5:   {input_per_mtok: 0.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0}
 local:
   default_cost_usd: 0.0
   per_hour_usd: 0.0     # optional electricity/amortization; cost = per_hour_usd * latency_s / 3600
 ```
+**Actual cost** = the backend's `reported_cost_usd` (OpenRouter `usage.cost`) when present (`cost_source=reported`), else priced from `pricing.yaml` (`cost_source=pricing`); local calls use the local settings (`cost_source=local`). The calibration of pricing.yaml against reported cost is shown in `report` so drift is visible.
 Unknown model → cost recorded as NULL with a warning (never silently $0). Reports show "prices unverified" if all values are still 0.
 
 **Counterfactual** (per route, baseline model from config):
@@ -261,7 +272,7 @@ Unknown model → cost recorded as NULL with a warning (never silently $0). Repo
   - Proxy (`hybrid-router serve`) is deferred to an experimental phase 9: full SSE streaming with `ping` keep-alives while buffering, byte-exact pass-through for cloud, `x-claude-code-*` hint headers for session/request-class routing.
 - `EmbeddingScorer` stub: interface, embedding via Ollama `/api/embed`, in-memory kNN over stored route embeddings (new `embeddings` table), score = fraction of k neighbors escalated; marked experimental.
 - `LearnedScorer` stub: trains on `features` + `local_succeeded`, persists with joblib, `hybrid-router train-scorer`.
-- README (written in phase 8, drafted earlier as phases land): `ollama pull qwen3:8b`, `ollama pull nomic-embed-text`, `uv sync`, `ANTHROPIC_API_KEY`, config walkthrough, mermaid diagram (request → scorer → zone → strategy → backends → validators → telemetry → report/tune/dashboard), tuning guide.
+- README (written in phase 8, drafted earlier as phases land): `ollama pull qwen3:8b`, `ollama pull nomic-embed-text`, `uv sync`, `OPENROUTER_API_KEY`, config walkthrough, mermaid diagram (request → scorer → zone → strategy → backends → validators → telemetry → report/tune/dashboard), tuning guide.
 
 ## 10. Phase 7–8 — Orchestration web app
 
@@ -292,7 +303,7 @@ Unknown model → cost recorded as NULL with a warning (never silently $0). Repo
    - Score histogram coloured by outcome.
    - p50/p95 latency per tier, and cascade waste.
    - Top escalation reasons.
-   - A header strip shows Ollama/Anthropic health and the loaded models.
+   - A header strip shows Ollama/OpenRouter health and the loaded models.
 
 ### API sketch
 - `POST /api/chat/{conversation_id}/messages`: SSE stream of `StreamEvent`s, ending with a `route_decision` event. Also `GET/POST/DELETE /api/conversations`.
@@ -316,7 +327,7 @@ A 16 GB Mac can serve only one local generation well at a time. Local backends t
 ### Security (LAN / tailnet)
 - The server binds `127.0.0.1` by default. A non-loopback `--host` refuses to start unless `HYBRID_ROUTER_WEB_TOKEN` is set. The SPA asks for the token once and keeps it in localStorage.
 - No CORS. The frontend is same-origin.
-- `ANTHROPIC_API_KEY` stays server-side and is never returned by `/api/config`.
+- `OPENROUTER_API_KEY` stays server-side and is never returned by `/api/config`.
 - The example agent's `run_python` tool is remote code execution if exposed. It is disabled by default in the web app, needs `agent.allow_code_exec: true`, and runs in a subprocess with a timeout, a temp working directory and no inherited env.
 - Spend guard: a configurable daily cloud budget, plus a per-run cap for compare and eval runs. When a budget is hit, cloud tiers are blocked and the UI says so.
 - The README recommends `tailscale serve` for HTTPS rather than building TLS into the app.
@@ -334,7 +345,7 @@ A 16 GB Mac can serve only one local generation well at a time. Local backends t
 
 ## 11. Engineering conventions (→ CLAUDE.md)
 
-Python 3.11+, uv, src layout, pydantic v2 for all config and data models, `ruff` (lint + format), `pyright` basic, pytest + `pytest-asyncio`. No network in unit tests (`ScriptedBackend`). Integration tests in `tests/integration/`, auto-skipped unless Ollama responds at the configured URL **and** `ANTHROPIC_API_KEY` is set. No hardcoded model names or prices outside example config / pricing.yaml. Router never imports a concrete backend. Every routing decision is explainable via `reasons`. Frontend: TypeScript strict, API types generated from OpenAPI (never hand-written), `pnpm lint && pnpm test` must pass; built assets are not committed. Each phase ends with a stop for review.
+Python 3.11+, uv, src layout, pydantic v2 for all config and data models, `ruff` (lint + format), `pyright` basic, pytest + `pytest-asyncio`. No network in unit tests (`ScriptedBackend`). Integration tests in `tests/integration/`, auto-skipped unless Ollama responds at the configured URL **and** `OPENROUTER_API_KEY` is set. No hardcoded model names or prices outside example config / pricing.yaml. Router never imports a concrete backend. Every routing decision is explainable via `reasons`. Frontend: TypeScript strict, API types generated from OpenAPI (never hand-written), `pnpm lint && pnpm test` must pass; built assets are not committed. Each phase ends with a stop for review.
 
 ## 12. Risks / things to watch
 

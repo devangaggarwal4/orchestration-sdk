@@ -1,0 +1,18 @@
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"role":"assistant","reasoning":"Need the ","reasoning_details":[{"type":"reasoning.text","text":"Need the ","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}
+
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"reasoning":"weather tool.","reasoning_details":[{"type":"reasoning.text","text":"weather tool.","index":0}]},"finish_reason":null}]}
+
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"sig-xyz","index":0}]},"finish_reason":null}]}
+
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"content":"Checking."},"finish_reason":null}]}
+
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"toolu_01","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\": \"Tok"}}]},"finish_reason":null}]}
+
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"yo\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: {"id":"gen-2","model":"anthropic/claude-opus-5.5","choices":[],"usage":{"prompt_tokens":300,"completion_tokens":40,"total_tokens":340,"cost":0.0020}}
+
+data: [DONE]
+

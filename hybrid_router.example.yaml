@@ -5,7 +5,7 @@
 # Show the resolved config with:  hybrid-router config
 
 tiers:
-  # Cheapest tier. Any backend kind works here (ollama today; llama.cpp / MLX later).
+  # Cheapest tier. Any backend kind works here.
   local:
     kind: ollama
     model: qwen3:8b               # fits a 16 GB Mac at Q4; `ollama pull qwen3:8b`
@@ -17,21 +17,37 @@ tiers:
     logprobs: true                # needed for the confidence validator (recent Ollama)
     default_max_tokens: 4096
 
-  # Default escalation target.
+  # Alternative local runtime: any OpenAI-compatible server (llama.cpp
+  # `llama-server`, LM Studio, vLLM, mlx_lm.server). Replaces the block above.
+  # local:
+  #   kind: openai_compat
+  #   model: qwen3-8b
+  #   base_url: http://localhost:8080/v1
+  #   api_key_env: ""             # local servers need no key
+  #   logprobs: true
+  #   prompt_caching: false
+
+  # Default escalation target: Claude via OpenRouter. Needs OPENROUTER_API_KEY.
   sonnet:
-    kind: anthropic
-    model: claude-sonnet-5-5
-    # effort: medium              # low | medium | high | xhigh | max (model default if unset)
-    # thinking: omit              # omit | adaptive | between_tools (Sonnet 5.5 only: reasoning off)
-    prompt_caching: true
-    refusal_fallback: true        # API re-runs a refused request on a fallback model
+    kind: openai_compat
+    model: anthropic/claude-sonnet-5.5     # check ids at https://openrouter.ai/models
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    sampling_params: false        # Claude 5.5 rejects temperature
+    forced_tool_choice: false     # ...and tool_choice any/tool
+    prompt_caching: true          # cache_control breakpoints on system + latest message
     default_max_tokens: 16000
+    # reasoning: {effort: medium} # OpenRouter reasoning settings
+    # provider: {order: [anthropic], allow_fallbacks: true}   # OpenRouter provider routing
+    # extra_headers: {X-Title: hybrid-router}                 # OpenRouter app attribution
 
   # Hardest tasks.
   opus:
-    kind: anthropic
-    model: claude-opus-5-5
-    # effort: high                # Opus 5.5 defaults to medium
+    kind: openai_compat
+    model: anthropic/claude-opus-5.5       # verify this id; `hybrid-router smoke` checks it
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    sampling_params: false
+    forced_tool_choice: false
     prompt_caching: true
-    refusal_fallback: true
     default_max_tokens: 16000

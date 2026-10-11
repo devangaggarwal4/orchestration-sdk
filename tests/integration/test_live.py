@@ -1,7 +1,7 @@
 """Live smoke tests against real backends.
 
 Skipped unless Ollama answers at the configured URL with the configured model
-pulled AND ANTHROPIC_API_KEY is set. Each cloud tier makes two small calls.
+pulled AND OPENROUTER_API_KEY is set. Each cloud tier makes two small calls.
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ def _ollama_ready() -> bool:
     return local.model in names or f"{local.model}:latest" in names
 
 
-if not (_ollama_ready() and os.environ.get("ANTHROPIC_API_KEY")):
+if not (_ollama_ready() and os.environ.get("OPENROUTER_API_KEY")):
     pytest.skip(
-        "needs a running Ollama with the local model pulled and ANTHROPIC_API_KEY",
+        "needs a running Ollama with the local model pulled and OPENROUTER_API_KEY",
         allow_module_level=True,
     )
 
@@ -79,9 +79,11 @@ async def test_tool_call(tier: Tier):
     assert "tokyo" in str(resp.tool_calls[0].input.get("city", "")).lower()
 
 
-async def test_claude_count_tokens_is_exact():
-    async with create_backend(CONFIG.tiers[Tier.SONNET], tier=Tier.SONNET) as backend:
-        n = await backend.count_tokens(
-            CompletionRequest(messages=[Message(role="user", content="hello " * 50)])
+@pytest.mark.parametrize("tier", [Tier.SONNET, Tier.OPUS])
+async def test_cloud_reports_cost_and_model_exists(tier: Tier):
+    async with create_backend(CONFIG.tiers[tier], tier=tier) as backend:
+        assert (await backend.health()).ok, "model id not found on OpenRouter"
+        resp = await backend.generate(
+            CompletionRequest(messages=[Message(role="user", content="Say hi")], max_tokens=500)
         )
-    assert 40 < n < 200
+    assert resp.reported_cost_usd is not None and resp.reported_cost_usd > 0
