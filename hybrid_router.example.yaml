@@ -63,6 +63,7 @@ routing:
   pre_route_fallback_on_error: true
   cloud_retries: 1
   local_concurrency: 1            # local generations at once
+  daily_cloud_budget_usd: null    # e.g. 5.0: once today's cloud spend hits it, stay local
 
 scorer:
   # score = 1 - prod(1 - weight * feature); each weight in [0, 1]
@@ -92,3 +93,15 @@ telemetry:
   cache_assumption: observed      # observed | none (cache-hit ratio assumed for local routes)
   token_ratio_default: 1.15       # local->Claude tokens until escalations calibrate it
   token_ratio_min_samples: 20
+
+agent:
+  workspace: .                    # directory the example agent's file tools may read
+  max_steps: 12
+  allow_code_exec: false          # run_python tool; executes model-written code
+  exec_timeout_s: 10
+
+web:
+  host: 127.0.0.1                 # non-loopback requires HYBRID_ROUTER_WEB_TOKEN
+  port: 8765
+  eval_db_path: evals.sqlite      # eval runs launched from the UI
+  run_budget_usd: 2.0             # cloud cap per compare/eval run

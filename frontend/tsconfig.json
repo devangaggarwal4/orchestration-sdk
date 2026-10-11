@@ -12,7 +12,7 @@
     "noFallthroughCasesInSwitch": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "node"],
     "noEmit": true
   },
   "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts"]

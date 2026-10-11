@@ -1,6 +1,6 @@
 # hybrid-router — Implementation Plan
 
-Status: **approved** (2026-10-11). Built phase by phase with a review stop after each.
+Status: **all eight phases built** (2026-10-11). The user approved building phases 2–8 without stopping between them. The experimental Anthropic-compatible proxy (phase 9) has not been started.
 
 ## 0. Decisions already made (from Q&A)
 
