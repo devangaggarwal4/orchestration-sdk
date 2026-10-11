@@ -1,6 +1,6 @@
 """Example: a repo assistant agent using HybridRouter as its model provider.
 
-    uv run python examples/agent/run_agent.py "Where is the escalation logic and what triggers Opus?"
+    uv run python examples/agent/run_agent.py "Where is the escalation logic?"
     uv run python examples/agent/run_agent.py --simulate "..."
 
 Each step prints the routing decision (tier, score, zone) so you can watch the
