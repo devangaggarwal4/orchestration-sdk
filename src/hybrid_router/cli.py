@@ -286,6 +286,34 @@ def whatif(
     )
 
 
+@app.command("train-scorer")
+def train_scorer(
+    since: SinceOpt = "90d",
+    config: ConfigOpt = None,
+    db: DbOpt = None,
+    out: Annotated[
+        Path | None, typer.Option(help="Model file (default: scorer.learned_model_path)")
+    ] = None,
+) -> None:
+    """Fit the LearnedScorer on telemetry; enable with `scorer.kind: learned`."""
+    from hybrid_router.reporting import load_routes, parse_since
+    from hybrid_router.scoring.learned import train
+
+    cfg = load_config(config)
+    try:
+        model = train(load_routes(_open_db(cfg, db), parse_since(since)))
+    except ValueError as e:
+        console.print(f"[yellow]{e}[/]")
+        raise typer.Exit(1) from None
+    path = out or Path(cfg.scorer.learned_model_path)
+    model.save(path)
+    auc_txt = f"{model.auc:.2f}" if model.auc is not None else "n/a"
+    console.print(f"trained on {model.trained_on} routes, AUC {auc_txt} → {path}")
+    for f, w in zip(model.features, model.weights, strict=True):
+        console.print(f"  {f:<10} {w:+.2f}")
+    console.print("enable with:  scorer: {kind: learned}")
+
+
 @app.command("eval")
 def eval_cmd(
     config: ConfigOpt = None,

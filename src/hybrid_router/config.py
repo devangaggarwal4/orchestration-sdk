@@ -91,7 +91,10 @@ class KeywordRule(_Section):
 
 
 class RuleScorerConfig(_Section):
-    kind: Literal["rule"] = "rule"
+    # "learned" uses the model written by `hybrid-router train-scorer` (falls back
+    # to rule if the file is missing).
+    kind: Literal["rule", "learned"] = "rule"
+    learned_model_path: str = "learned_scorer.json"
     # Each feature is an independent signal of difficulty, combined noisy-OR:
     #   score = 1 - prod(1 - weight * feature)
     # A weight in [0, 1] is how far that feature alone can push the score, so a
@@ -217,6 +220,15 @@ class TelemetryConfig(_Section):
     token_ratio_min_samples: int = Field(default=20, ge=1)
 
 
+class AgentConfig(_Section):
+    # Directory the example agent's file tools may read.
+    workspace: str = "."
+    max_steps: int = Field(default=12, ge=1)
+    # run_python executes model-written code; keep off unless you trust the setup.
+    allow_code_exec: bool = False
+    exec_timeout_s: float = 10.0
+
+
 class RouterConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -225,6 +237,7 @@ class RouterConfig(BaseModel):
     scorer: RuleScorerConfig = RuleScorerConfig()
     validators: ValidatorsConfig = ValidatorsConfig()
     telemetry: TelemetryConfig = TelemetryConfig()
+    agent: AgentConfig = AgentConfig()
 
     def config_hash(self) -> str:
         """Short stable hash, recorded on every route so changes are traceable."""

@@ -100,7 +100,7 @@ class HybridRouter:
             else {tier: create_backend(cfg, tier=tier) for tier, cfg in self.config.tiers.items()}
         )
         self._custom_scorer = scorer is not None
-        self.scorer: Scorer = scorer or RuleScorer(self.config.scorer)
+        self.scorer: Scorer = scorer or build_scorer(self.config)
         self.observers: list[RouteObserver] = list(observers or [])
         if telemetry == "auto":
             telemetry = None
@@ -130,7 +130,7 @@ class HybridRouter:
         old = self.config
         self.config = config
         if not self._custom_scorer:
-            self.scorer = RuleScorer(config.scorer)
+            self.scorer = build_scorer(config)
         for tier, cfg in config.tiers.items():
             if old.tiers.get(tier) != cfg:
                 if (stale := self.backends.get(tier)) is not None:
@@ -561,6 +561,17 @@ class HybridRouter:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
+
+
+def build_scorer(config: RouterConfig) -> Scorer:
+    if config.scorer.kind == "learned":
+        path = Path(config.scorer.learned_model_path)
+        if path.is_file():
+            from hybrid_router.scoring.learned import LearnedScorer
+
+            return LearnedScorer.load(path, config.scorer)
+        log.warning("learned scorer model %s not found; using the rule scorer", path)
+    return RuleScorer(config.scorer)
 
 
 def revise_request(
