@@ -259,6 +259,11 @@ class HybridRouter:
         )
         zone = zone_for(scored.score, cfg.routing)
         plan = first_attempt(strategy, zone, scored.score, cfg.routing, forced)
+        budget_note: list[str] = []
+        if plan.tier.is_cloud and not self.cloud_allowed(cfg):
+            # Out of cloud budget: try local with the full chain, never escalate.
+            plan = AttemptPlan(Tier.LOCAL, "direct", buffered=False, level="full", escalate=False)
+            budget_note = ["daily cloud budget reached: kept local"]
         decision = RouteDecision(
             session_id=req.session_id,
             step_index=step_index,
@@ -266,7 +271,9 @@ class HybridRouter:
             strategy=strategy,
             score=scored.score,
             zone=zone,
-            reasons=scored.reasons + ([f"forced to {forced.value}"] if forced else []),
+            reasons=scored.reasons
+            + ([f"forced to {forced.value}"] if forced else [])
+            + budget_note,
             features=scored.features,
             forced=forced is not None,
             planned_tier=plan.tier,
@@ -332,6 +339,9 @@ class HybridRouter:
 
             failure = rec.failure
             next_tier = self._next_tier(current, rec, failure, scored.score, strategy, cfg)
+            if next_tier is not None and next_tier.is_cloud and not self.cloud_allowed(cfg):
+                decision.reasons.append("daily cloud budget reached: no escalation")
+                next_tier = None
             if next_tier is not None and len(decision.attempts) < cfg.routing.max_attempts:
                 reason = f"{rec.tier.value} failed {failure.name if failure else 'call'}: " + (
                     failure.reason if failure else (rec.error or "unknown")
@@ -385,6 +395,20 @@ class HybridRouter:
 
         await self._notify_route(decision, req, final)
         yield RouteEndEvent(decision=decision, response=final)
+
+    def cloud_spent_today(self) -> float | None:
+        spent = getattr(self.telemetry, "spent_today", None)
+        if not callable(spent):
+            return None
+        value = spent()
+        return float(value) if isinstance(value, int | float) else None
+
+    def cloud_allowed(self, cfg: RouterConfig | None = None) -> bool:
+        limit = (cfg or self.config).routing.daily_cloud_budget_usd
+        if limit is None:
+            return True
+        spent = self.cloud_spent_today()
+        return spent is None or spent < limit
 
     # --- internals -----------------------------------------------------------
 

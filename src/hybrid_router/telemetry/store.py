@@ -146,6 +146,12 @@ class TelemetryStore:
         self._conn = connect(self.db_path)
         init_db(self._conn)
         self._load_ratio_samples()
+        self._day, self._spent_today = _today_start(), 0.0
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(actual_cost_usd), 0) FROM calls WHERE tier != 'local' AND ts >= ?",
+            (self._day,),
+        ).fetchone()
+        self._spent_today = float(row[0] or 0.0)
 
         self._queue: queue.Queue[Callable[[sqlite3.Connection], None] | None] = queue.Queue()
         self._thread = threading.Thread(target=self._writer, name="telemetry", daemon=True)
@@ -177,6 +183,12 @@ class TelemetryStore:
 
     def update_config(self, config: RouterConfig) -> None:
         self.config = config
+
+    def spent_today(self) -> float:
+        """Cloud spend since local midnight (actual cost, as recorded)."""
+        if _today_start() != self._day:
+            self._day, self._spent_today = _today_start(), 0.0
+        return self._spent_today
 
     # --- row building (pure apart from in-memory calibration state) -----------
 
@@ -213,6 +225,9 @@ class TelemetryStore:
                 actual_total = None
             elif actual_total is not None:
                 actual_total += cost.usd + vcost
+            if a.tier.is_cloud:
+                self.spent_today()  # roll the day over if needed
+                self._spent_today += (cost.usd or 0.0) + vcost
             if a.tier.is_cloud and decision.session_id:
                 read, total = self._session_cache.get(decision.session_id, (0, 0))
                 self._session_cache[decision.session_id] = (
@@ -341,6 +356,11 @@ class TelemetryStore:
 
     async def aclose(self) -> None:
         self.close()
+
+
+def _today_start() -> float:
+    now = time.localtime()
+    return time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1))
 
 
 def _insert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:

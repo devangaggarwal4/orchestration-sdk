@@ -77,6 +77,9 @@ class RoutingConfig(_Section):
     cloud_retries: int = Field(default=1, ge=0)
     # Local generations allowed at once; an 8B model on 16 GB serves one well.
     local_concurrency: int = Field(default=1, ge=1)
+    # Stop using cloud tiers once today's (local time) cloud spend reaches this.
+    # Requests then stay local and say so in their reasons. None = no limit.
+    daily_cloud_budget_usd: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _ordered(self) -> RoutingConfig:
@@ -229,6 +232,15 @@ class AgentConfig(_Section):
     exec_timeout_s: float = 10.0
 
 
+class WebConfig(_Section):
+    host: str = "127.0.0.1"
+    port: int = 8765
+    # Telemetry DB for eval runs launched from the web app.
+    eval_db_path: str = "evals.sqlite"
+    # Per-run cloud spending cap for compare and eval runs.
+    run_budget_usd: float = Field(default=2.0, ge=0)
+
+
 class RouterConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -238,6 +250,7 @@ class RouterConfig(BaseModel):
     validators: ValidatorsConfig = ValidatorsConfig()
     telemetry: TelemetryConfig = TelemetryConfig()
     agent: AgentConfig = AgentConfig()
+    web: WebConfig = WebConfig()
 
     def config_hash(self) -> str:
         """Short stable hash, recorded on every route so changes are traceable."""

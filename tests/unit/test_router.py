@@ -384,3 +384,27 @@ async def test_real_rule_scorer_end_to_end():
     assert hard.decision.zone is Zone.HARD
     assert hard.decision.final_tier is not None and hard.decision.final_tier.is_cloud
     assert hard.decision.reasons
+
+
+async def test_daily_cloud_budget_keeps_requests_local():
+    class Spent:
+        def __init__(self, usd):
+            self.usd = usd
+
+        def spent_today(self):
+            return self.usd
+
+        async def on_route(self, *a):
+            pass
+
+        async def on_local_tool_error(self, *a):
+            pass
+
+    router, backends = make(score=0.9, local=["I'm not sure."], daily_cloud_budget_usd=1.0)
+    router.telemetry = Spent(5.0)
+    d = (await router.acomplete("hard one")).decision
+    assert d.tiers_attempted == [Tier.LOCAL]
+    assert "daily cloud budget reached: kept local" in d.reasons
+    router.telemetry = Spent(0.5)
+    d = (await router.acomplete("hard one")).decision
+    assert d.final_tier is Tier.OPUS

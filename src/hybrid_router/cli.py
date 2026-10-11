@@ -314,6 +314,41 @@ def train_scorer(
     console.print("enable with:  scorer: {kind: learned}")
 
 
+@app.command()
+def web(
+    config: ConfigOpt = None,
+    host: Annotated[str | None, typer.Option(help="Bind address (default: web.host)")] = None,
+    port: Annotated[int | None, typer.Option(help="Port (default: web.port)")] = None,
+    fake_backends: Annotated[
+        bool, typer.Option(help="Demo models: no Ollama or API key needed")
+    ] = False,
+) -> None:
+    """Start the web app (chat, agent runs, compare, tuning, dashboard)."""
+    import os
+
+    try:
+        import uvicorn
+
+        from hybrid_router.web.app import create_app
+    except ImportError:
+        console.print("[red]web extra not installed:[/] uv sync --extra web")
+        raise typer.Exit(1) from None
+    cfg = load_config(config)
+    host = host or cfg.web.host
+    port = port or cfg.web.port
+    token = os.environ.get("HYBRID_ROUTER_WEB_TOKEN") or None
+    if host not in ("127.0.0.1", "localhost", "::1") and not token:
+        console.print(
+            f"[red]refusing to listen on {host} without a token.[/] Set HYBRID_ROUTER_WEB_TOKEN "
+            "(e.g. `export HYBRID_ROUTER_WEB_TOKEN=$(openssl rand -hex 24)`), or bind 127.0.0.1."
+        )
+        raise typer.Exit(2)
+    app_ = create_app(config, fake=fake_backends, token=token)
+    mode = " [yellow](demo models)[/]" if fake_backends else ""
+    console.print(f"hybrid-router web on http://{host}:{port}{mode}")
+    uvicorn.run(app_, host=host, port=port, log_level="warning")
+
+
 @app.command("eval")
 def eval_cmd(
     config: ConfigOpt = None,

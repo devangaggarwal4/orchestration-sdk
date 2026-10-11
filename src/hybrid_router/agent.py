@@ -216,6 +216,8 @@ class AgentEndEvent(BaseModel):
     answer: str
     steps: int
     error: str | None = None
+    # Messages added during the run (assistant turns and tool results).
+    new_messages: list[Message] = []
 
 
 AgentEvent = Annotated[
@@ -239,9 +241,19 @@ class Agent:
     session_id: str = field(default_factory=lambda: f"agent-{uuid.uuid4().hex[:10]}")
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    async def run(self, task: str, *, strategy: Any = None) -> AsyncIterator[AgentEvent]:
+    async def run(
+        self,
+        task: str | list[Message],
+        *,
+        strategy: Any = None,
+        force_tier: Any = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Run on a new task, or continue a conversation (list of messages)."""
         by_name = {t.spec.name: t for t in self.tools}
-        messages: list[Message] = [Message(role="user", content=task)]
+        messages: list[Message] = (
+            [Message(role="user", content=task)] if isinstance(task, str) else list(task)
+        )
+        start = len(messages)
         answer = ""
         for step in range(self.max_steps):
             task_type = self.task_type
@@ -255,6 +267,7 @@ class Agent:
                     task_type=task_type,
                     session_id=self.session_id,
                     strategy=strategy,
+                    force_tier=force_tier,
                     metadata=dict(self.metadata),
                 ):
                     if isinstance(ev, RouteEndEvent):
@@ -262,7 +275,13 @@ class Agent:
                     else:
                         yield RouterEventWrapper(step=step, event=ev)
             except RoutingError as e:  # pragma: no cover - astream doesn't raise it
-                yield AgentEndEvent(status="error", answer=answer, steps=step + 1, error=str(e))
+                yield AgentEndEvent(
+                    status="error",
+                    answer=answer,
+                    steps=step + 1,
+                    error=str(e),
+                    new_messages=messages[start:],
+                )
                 return
             assert end is not None
             yield StepEndEvent(step=step, decision=end.decision)
@@ -278,7 +297,9 @@ class Agent:
             messages.append(response.as_message())
             answer = response.text or answer
             if not response.tool_calls:
-                yield AgentEndEvent(status="done", answer=answer, steps=step + 1)
+                yield AgentEndEvent(
+                    status="done", answer=answer, steps=step + 1, new_messages=messages[start:]
+                )
                 return
             results = []
             for call in response.tool_calls:
@@ -300,7 +321,9 @@ class Agent:
                     ToolResultBlock(tool_use_id=call.id, content=content, is_error=is_error)
                 )
             messages.append(Message(role="user", content=results))
-        yield AgentEndEvent(status="max_steps", answer=answer, steps=self.max_steps)
+        yield AgentEndEvent(
+            status="max_steps", answer=answer, steps=self.max_steps, new_messages=messages[start:]
+        )
 
     async def run_to_end(self, task: str, **kwargs: Any) -> AgentEndEvent:
         last: AgentEndEvent | None = None
