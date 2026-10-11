@@ -83,3 +83,12 @@ validators:
   confidence: {enabled: true, min_mean_logprob: -1.0, two_sample: false}
   execution: {enabled: true, python_compile: true}
   judge: {enabled: false, tier: local}
+
+telemetry:
+  enabled: true
+  db_path: hybrid_router.sqlite
+  # pricing_path: pricing.yaml    # default: ./pricing.yaml, else the packaged copy
+  counterfactual_baseline: sonnet # "what if everything went to this tier"
+  cache_assumption: observed      # observed | none (cache-hit ratio assumed for local routes)
+  token_ratio_default: 1.15       # local->Claude tokens until escalations calibrate it
+  token_ratio_min_samples: 20

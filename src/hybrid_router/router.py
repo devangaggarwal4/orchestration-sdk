@@ -88,8 +88,11 @@ class HybridRouter:
         backends: Mapping[Tier, Backend] | None = None,
         scorer: Scorer | None = None,
         observers: list[RouteObserver] | None = None,
+        telemetry: Any = "auto",
         test_runner: TestRunner | None = None,
     ):
+        """``telemetry``: "auto" records to the configured SQLite DB when
+        ``telemetry.enabled``; pass a ``TelemetryStore`` to use your own, or None."""
         self.config = config or load_config()
         self.backends: dict[Tier, Backend] = (
             dict(backends)
@@ -99,6 +102,15 @@ class HybridRouter:
         self._custom_scorer = scorer is not None
         self.scorer: Scorer = scorer or RuleScorer(self.config.scorer)
         self.observers: list[RouteObserver] = list(observers or [])
+        if telemetry == "auto":
+            telemetry = None
+            if self.config.telemetry.enabled:
+                from hybrid_router.telemetry import TelemetryStore
+
+                telemetry = TelemetryStore.from_config(self.config)
+        self.telemetry = telemetry
+        if telemetry is not None:
+            self.observers.append(telemetry)
         self.test_runner = test_runner
         self.sessions = SessionStore()
         self._local_slots: asyncio.Semaphore | None = None
@@ -125,6 +137,8 @@ class HybridRouter:
                     # Closed on aclose(); in-flight calls may still be using it.
                     self._stale_backends.append(stale)
                 self.backends[tier] = create_backend(cfg, tier=tier)
+        if self.telemetry is not None and hasattr(self.telemetry, "update_config"):
+            self.telemetry.update_config(config)
         if old.routing.local_concurrency != config.routing.local_concurrency:
             self._local_slots = None
 

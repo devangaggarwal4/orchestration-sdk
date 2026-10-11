@@ -1,0 +1,32 @@
+# Per-million-token prices used for the COUNTERFACTUAL ("what if every call went
+# to the cloud") and as a fallback when a provider doesn't report cost.
+# Actual cloud cost comes from OpenRouter's per-call `usage.cost`.
+#
+# >>> VERIFY EVERY PRICE before trusting reports: https://openrouter.ai/models <<<
+# The values below are placeholders taken from listings seen on 2026-10-11 and are
+# marked `verified: false`; reports show "prices unverified" until you set
+# `verified: true` on each model you've checked.
+#
+# Lookup is by exact model id, then the longest matching prefix (so a dated id like
+# anthropic/claude-sonnet-5.5-20260928 uses the anthropic/claude-sonnet-5.5 row).
+currency: USD
+
+models:
+  anthropic/claude-sonnet-5.5:
+    input_per_mtok: 2.00
+    output_per_mtok: 10.00
+    cache_read_per_mtok: 0.20
+    cache_write_per_mtok: 2.50
+    verified: false
+  anthropic/claude-opus-5.5:
+    input_per_mtok: 4.00
+    output_per_mtok: 20.00
+    cache_read_per_mtok: 0.40
+    cache_write_per_mtok: 5.00
+    verified: false
+
+# Local models cost $0 by default. Optionally charge electricity/amortization by
+# wall-clock time: cost = per_hour_usd * latency_seconds / 3600.
+local:
+  default_cost_usd: 0.0
+  per_hour_usd: 0.0

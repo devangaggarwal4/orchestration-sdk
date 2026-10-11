@@ -202,6 +202,21 @@ class ValidatorsConfig(_Section):
     judge: JudgeConfig = JudgeConfig()
 
 
+class TelemetryConfig(_Section):
+    enabled: bool = True
+    db_path: str = "hybrid_router.sqlite"
+    # pricing.yaml location; falls back to ./pricing.yaml, then the packaged copy.
+    pricing_path: str | None = None
+    # "What would it have cost if every call went to the cloud", priced as this tier.
+    counterfactual_baseline: Tier = Tier.SONNET
+    # For local routes, assume the session's observed cloud cache-hit ratio
+    # ("observed") or no caching at all ("none").
+    cache_assumption: Literal["observed", "none"] = "observed"
+    # Local -> Claude token ratio, used until enough escalations calibrate it.
+    token_ratio_default: float = Field(default=1.15, gt=0)
+    token_ratio_min_samples: int = Field(default=20, ge=1)
+
+
 class RouterConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -209,6 +224,7 @@ class RouterConfig(BaseModel):
     routing: RoutingConfig = RoutingConfig()
     scorer: RuleScorerConfig = RuleScorerConfig()
     validators: ValidatorsConfig = ValidatorsConfig()
+    telemetry: TelemetryConfig = TelemetryConfig()
 
     def config_hash(self) -> str:
         """Short stable hash, recorded on every route so changes are traceable."""
