@@ -314,6 +314,31 @@ def train_scorer(
     console.print("enable with:  scorer: {kind: learned}")
 
 
+def _ensure_ui() -> None:
+    """Build the web UI when it's missing or older than its source."""
+    from hybrid_router.web.frontend_build import FRONTEND_DIR, build_ui, ui_status
+
+    status = ui_status()
+    if status == "ok":
+        return
+    if status == "no_source":
+        console.print(
+            "[yellow]The web UI isn't built and its source (frontend/) isn't here.[/] "
+            "Run this command from a clone of the repository. The API still works at /docs."
+        )
+        return
+    why = "isn't built yet" if status == "missing" else "is older than its source"
+    console.print(f"[bold]The web UI {why}; building it now[/] (about 30 seconds the first time)")
+    if build_ui(FRONTEND_DIR, echo=lambda m: console.print(m, highlight=False)):
+        console.print("[green]✓ web UI built[/]")
+    else:
+        console.print(
+            "[red]Couldn't build the web UI[/] (see above). The server will start anyway and "
+            "show instructions in the browser. Fix the problem, then run "
+            "[bold]./scripts/setup.sh[/] and reload the page."
+        )
+
+
 @app.command()
 def web(
     config: ConfigOpt = None,
@@ -322,6 +347,9 @@ def web(
     fake_backends: Annotated[
         bool, typer.Option(help="Demo models: no Ollama or API key needed")
     ] = False,
+    build: Annotated[
+        bool, typer.Option(help="Build the UI first if it's missing or out of date")
+    ] = True,
 ) -> None:
     """Start the web app (chat, agent runs, compare, tuning, dashboard)."""
     import os
@@ -343,6 +371,8 @@ def web(
             "(e.g. `export HYBRID_ROUTER_WEB_TOKEN=$(openssl rand -hex 24)`), or bind 127.0.0.1."
         )
         raise typer.Exit(2)
+    if build:
+        _ensure_ui()
     app_ = create_app(config, fake=fake_backends, token=token)
     mode = " [yellow](demo models)[/]" if fake_backends else ""
     console.print(f"hybrid-router web on http://{host}:{port}{mode}")

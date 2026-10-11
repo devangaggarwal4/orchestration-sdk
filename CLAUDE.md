@@ -51,6 +51,7 @@ cd frontend && pnpm gen:api              # after changing any API/event model
   - `store.py`: conversations and runs.
   - `demo.py`: demo backends for `--fake-backends`.
   - `static/`: the built frontend. It's generated and git-ignored.
+  - `frontend_build.py`: `hybrid-router web` rebuilds `static/` when it's missing or older than `frontend/`. The server resolves `static/` per request, so a build is picked up without a restart.
 - `frontend/`: React, Vite, TypeScript, Tailwind v4, TanStack Query and Recharts. `src/api/schema.d.ts` is generated; never edit it by hand.
 - `testing.py`: `ScriptedBackend` and `Reply`, used for unit tests.
 - `tests/unit/`: no network. `tests/integration/`: live tests. `tests/fixtures/`: hand-written wire samples matching Ollama's `api/types.go` and OpenRouter's documented SSE, not live recordings.

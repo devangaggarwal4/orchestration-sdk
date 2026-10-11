@@ -19,7 +19,6 @@ from typing import Any, Literal
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from hybrid_router import __version__
@@ -40,6 +39,21 @@ from hybrid_router.web.runs import RunManager, sse
 from hybrid_router.web.store import WebStore
 
 STATIC_DIR = Path(__file__).parent / "static"
+NOT_BUILT_PAGE = """<!doctype html><meta charset="utf-8"><title>hybrid-router</title>
+<body style="font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;line-height:1.5">
+<h1>The web UI hasn't been built yet</h1>
+<p>The server is running, but the page files are missing. To fix it:</p>
+<ol>
+<li>Stop this server with <kbd>Ctrl+C</kbd>.</li>
+<li>Start it again with <code>uv run hybrid-router web</code> (add <code>--fake-backends</code>
+for demo models). It builds the UI automatically; this needs Node.js 20.19 or newer
+(<code>brew install node</code>).</li>
+</ol>
+<p>Or, in another terminal, run <code>./scripts/setup.sh</code> from the project folder and
+then reload this page; no restart needed.</p>
+<p>The terminal where you started the server says what went wrong if the build failed.
+The API itself works: <a href="/docs">/docs</a>.</p>
+</body>"""
 Strategy = Literal["hybrid", "pre_route", "cascade"]
 
 
@@ -629,29 +643,21 @@ def create_app(
         return rep
 
     # --- frontend -------------------------------------------------------------
+    # Resolved per request, so a build made while the server runs is picked up
+    # on the next page load (no restart needed).
 
-    index = static_dir / "index.html" if static_dir else None
-    if static_dir and index and index.is_file():
-        if (static_dir / "assets").is_dir():
-            app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
-
-        @app.get("/{path:path}", include_in_schema=False)
-        def spa(path: str) -> FileResponse:
-            if path.startswith("api/"):
-                raise HTTPException(404)
-            candidate = (static_dir / path).resolve()
-            if path and candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):
-                return FileResponse(candidate)
-            return FileResponse(index)
-    else:
-
-        @app.get("/", include_in_schema=False)
-        async def not_built() -> HTMLResponse:
-            return HTMLResponse(
-                "<h1>hybrid-router</h1><p>The web UI isn't built. Run "
-                "<code>cd frontend && pnpm install && pnpm build</code>, or use the API at "
-                "<a href='/docs'>/docs</a>.</p>"
-            )
+    @app.get("/{path:path}", include_in_schema=False, response_model=None)
+    def spa(path: str) -> FileResponse | HTMLResponse:
+        if path.startswith("api/"):
+            raise HTTPException(404)
+        index = static_dir / "index.html" if static_dir else None
+        if static_dir is None or index is None or not index.is_file():
+            return HTMLResponse(NOT_BUILT_PAGE, status_code=503)
+        root = static_dir.resolve()
+        candidate = (static_dir / path).resolve()
+        if path and candidate.is_file() and candidate.is_relative_to(root):
+            return FileResponse(candidate)
+        return FileResponse(index)
 
     return app
 

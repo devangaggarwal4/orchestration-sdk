@@ -74,7 +74,7 @@ Done. Next:
 uv run hybrid-router web --fake-backends
 ```
 
-Open <http://127.0.0.1:8765>.
+The first time, it builds the web UI before starting (about 30 seconds). It does the same after a `git pull` that changed the UI. Wait for `hybrid-router web on http://127.0.0.1:8765`, then open <http://127.0.0.1:8765>.
 - **Chat:** send something easy ("hi") and something hard ("design a distributed lock and its trade-offs"). Then click **Why?** under each reply to see how it was routed.
 - **Stop the server:** press `Ctrl+C` in the terminal.
 
@@ -166,7 +166,7 @@ The Tuning page also edits this file for you. It always shows you a diff first a
 | `401 ... (check OPENROUTER_API_KEY)` | The key is wrong or revoked. Create a new one at openrouter.ai/keys. |
 | `402 ... (out of OpenRouter credits?)` | Add credit at openrouter.ai/credits. |
 | `model 'anthropic/...' not offered at https://openrouter.ai/api/v1` | The model id has changed on OpenRouter. Copy the current id from <https://openrouter.ai/models> into `tiers.sonnet.model` / `tiers.opus.model` in `hybrid_router.yaml`. |
-| The browser shows "The web UI isn't built" | `./scripts/setup.sh` (or `cd frontend && pnpm install && pnpm build`) |
+| The browser shows "The web UI hasn't been built yet" | `hybrid-router web` builds it automatically on start, so look in the terminal for why the build failed. Usually Node.js is missing or too old (`brew install node` / `brew upgrade node`). After fixing it, run `./scripts/setup.sh` and reload the page; no restart needed. |
 | `address already in use` | Another copy is running. Stop it with `Ctrl+C`, or use another port: `uv run hybrid-router web --port 8800` |
 | `refusing to listen on 0.0.0.0 without a token` | See [Reaching it from your phone](#reaching-it-from-your-phone-or-tailnet). |
 | `logprobs requested but none returned` in `smoke` | Your Ollama is too old for logprobs: `brew upgrade ollama`. Everything still works without them; only the confidence check is skipped. |

@@ -133,6 +133,7 @@ def workspace_tools(
                 out, err = await asyncio.wait_for(proc.communicate(), exec_timeout_s)
             except TimeoutError:
                 proc.kill()
+                await proc.wait()  # reap it, or it lingers as a zombie process
                 raise ToolError(f"timed out after {exec_timeout_s}s") from None
         text = out.decode(errors="replace") + err.decode(errors="replace")
         if proc.returncode:
