@@ -1,6 +1,6 @@
 # hybrid-router — Implementation Plan
 
-Status: **draft, awaiting approval**. No code is written until this plan is approved.
+Status: **approved** (2026-10-11). Built phase by phase with a review stop after each.
 
 ## 0. Decisions already made (from Q&A)
 
@@ -11,6 +11,8 @@ Status: **draft, awaiting approval**. No code is written until this plan is appr
 | Counterfactual tokens | Local token counts × a calibrated ratio learned from escalated routes (where we have both local and Claude counts). Falls back to `token_ratio_default` (1.15) until there are ≥ 20 samples. |
 | API style | Async core (`await router.acomplete(...)`, `router.astream(...)`) with a sync wrapper (`router.complete(...)`). |
 | Web app | Full orchestration web app (see §10): chat playground, live agent runs, live config tuning with what-if replay, side-by-side strategy compare + eval launcher, and the telemetry dashboard. FastAPI backend, React + Vite + TypeScript frontend shipped as built static assets inside the Python package. |
+| Tool errors | Approved: an erroring `tool_result` for a locally-served call raises the next step's score and back-fills `local_succeeded=false` on that call. |
+| Agent integration | Option C: our own agent loop + LangGraph adapter are first-class. Claude Agent SDK gets the supported "router as a tool" pattern (`delegate_local`) in phase 6; the Anthropic-compatible proxy (`hybrid-router serve`, full streaming, exact pass-through) is an experimental extra after phase 8, documented as unsupported by Anthropic. |
 | Web deployment | Single user, reachable on LAN / tailnet. Bearer-token auth, required whenever bound to a non-loopback address. |
 
 ## 1. Defaults I picked (tell me to change any)
@@ -83,7 +85,7 @@ orchestration-sdk/
 │   │   └── static/           # built frontend (generated, git-ignored, included in wheel)
 │   ├── adapters/
 │   │   ├── langgraph.py      # thin chat-model wrapper (optional import)
-│   │   └── claude_agent_sdk.md  # how to plug in (see §9)
+│   │   └── claude_agent_sdk.py  # delegate_local tool (see §9)
 │   └── cli.py                # hybrid-router report|tune|web|eval|smoke|serve
 ├── frontend/                 # React + Vite + TS source (pnpm); `pnpm build` -> src/hybrid_router/web/static
 ├── examples/agent/           # example agent with 3 tools
@@ -255,7 +257,8 @@ Unknown model → cost recorded as NULL with a warning (never silently $0). Repo
 - `examples/agent/`: a "repo assistant" agent loop with 3 tools (`read_file`, `search_text`, `run_python` in a subprocess with timeout), using `HybridRouter` as its model provider with `session_id` per run, tagging steps with `task_type`.
 - **Adapters**:
   - LangGraph: `HybridRouterChatModel(BaseChatModel)` in `adapters/langgraph.py`, optional import, converts LangChain messages ↔ ours, exposes `RouteDecision` in `response_metadata`.
-  - Claude Agent SDK: the SDK drives the Claude Code runtime and expects Anthropic Messages endpoints, so the clean seam is a **local Anthropic-compatible proxy** (`hybrid-router serve`, implements `POST /v1/messages` incl. streaming) and pointing `ANTHROPIC_BASE_URL` at it. I'll scope this as a documented design + minimal non-streaming proxy in phase 6, full streaming proxy as follow-up. **Please confirm this is acceptable.**
+  - Claude Agent SDK (supported pattern): an in-process MCP tool `delegate_local(task, task_type)` that sends simple subtasks through the router. Claude stays the main loop.
+  - Proxy (`hybrid-router serve`) is deferred to an experimental phase 9: full SSE streaming with `ping` keep-alives while buffering, byte-exact pass-through for cloud, `x-claude-code-*` hint headers for session/request-class routing.
 - `EmbeddingScorer` stub: interface, embedding via Ollama `/api/embed`, in-memory kNN over stored route embeddings (new `embeddings` table), score = fraction of k neighbors escalated; marked experimental.
 - `LearnedScorer` stub: trains on `features` + `local_succeeded`, persists with joblib, `hybrid-router train-scorer`.
 - README (written in phase 8, drafted earlier as phases land): `ollama pull qwen3:8b`, `ollama pull nomic-embed-text`, `uv sync`, `ANTHROPIC_API_KEY`, config walkthrough, mermaid diagram (request → scorer → zone → strategy → backends → validators → telemetry → report/tune/dashboard), tuning guide.

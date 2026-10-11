@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.coverage
+hybrid_router.yaml
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+src/hybrid_router/web/static/
+frontend/node_modules/

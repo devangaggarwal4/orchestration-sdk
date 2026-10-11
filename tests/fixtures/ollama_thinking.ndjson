@@ -1,0 +1,3 @@
+{"model":"qwen3:8b","created_at":"2026-10-11T10:00:00Z","message":{"role":"assistant","content":"","thinking":"User wants a word."},"done":false}
+{"model":"qwen3:8b","created_at":"2026-10-11T10:00:00Z","message":{"role":"assistant","content":"pong"},"done":false}
+{"model":"qwen3:8b","created_at":"2026-10-11T10:00:00Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":9}
