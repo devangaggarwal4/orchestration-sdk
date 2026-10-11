@@ -13,12 +13,14 @@ Model names live here (and in the YAML), never in code paths.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, SerializeAsAny, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, field_validator, model_validator
 
 from hybrid_router.backends.base import BackendConfig
 from hybrid_router.backends.registry import parse_backend_config
@@ -49,10 +51,169 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+class _Section(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RoutingConfig(_Section):
+    strategy: Literal["hybrid", "pre_route", "cascade"] = "hybrid"
+    # Zones: score < easy -> local (light checks, streamed live);
+    # score > hard -> skip local (Opus above opus_threshold); otherwise cascade.
+    # Conservative defaults for an 8B local model.
+    easy_threshold: float = Field(default=0.25, ge=0, le=1)
+    hard_threshold: float = Field(default=0.65, ge=0, le=1)
+    opus_threshold: float = Field(default=0.85, ge=0, le=1)
+    # Hard validator failures on the local tier skip Sonnet and go to Opus.
+    escalate_hard_to_opus: bool = True
+    # "original": resend the original request. "revise": also show the cloud
+    # model the failed local draft and why it failed.
+    escalation_mode: Literal["original", "revise"] = "original"
+    # Upper bound on model calls per routed request (all tiers).
+    max_attempts: int = Field(default=3, ge=1)
+    # pre_route never escalates on validation, but a crashed/timed-out call is
+    # not a routing result, so fall back to Sonnet when this is on.
+    pre_route_fallback_on_error: bool = True
+    # One retry for retryable cloud errors (rate limit, 5xx, timeout).
+    cloud_retries: int = Field(default=1, ge=0)
+    # Local generations allowed at once; an 8B model on 16 GB serves one well.
+    local_concurrency: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> RoutingConfig:
+        if not self.easy_threshold <= self.hard_threshold <= self.opus_threshold:
+            raise ValueError("thresholds must satisfy easy <= hard <= opus")
+        return self
+
+
+class KeywordRule(_Section):
+    pattern: str
+    weight: float = Field(default=1.0, ge=0, le=1)
+
+
+class RuleScorerConfig(_Section):
+    kind: Literal["rule"] = "rule"
+    # Each feature is an independent signal of difficulty, combined noisy-OR:
+    #   score = 1 - prod(1 - weight * feature)
+    # A weight in [0, 1] is how far that feature alone can push the score, so a
+    # missing signal (no tools, short context) never drags a clear one down.
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "tokens": 0.6,
+            "tools": 0.4,
+            "task_type": 0.8,
+            "keywords": 0.6,
+            "schema": 0.4,
+        }
+    )
+    # Context size: 0 at <= tokens_low, 1 at >= tokens_high (linear between).
+    tokens_low: int = 2000
+    tokens_high: int = 24000
+    tools_saturation: int = 8
+    task_types: dict[str, float] = Field(
+        default_factory=lambda: {
+            "classify": 0.05,
+            "extract": 0.1,
+            "summarize": 0.15,
+            "rewrite": 0.15,
+            "chat": 0.3,
+            "tool_use": 0.4,
+            "code": 0.6,
+            "code_review": 0.8,
+            "plan": 0.85,
+            "multi_step_reasoning": 0.9,
+        }
+    )
+    task_type_default: float = 0.4
+    keywords: list[KeywordRule] = Field(
+        default_factory=lambda: [
+            KeywordRule(pattern=r"\b(prove|proof|derive|theorem)\b", weight=1.0),
+            KeywordRule(pattern=r"\b(architect(ure)?|design a|trade-?offs?)\b", weight=0.8),
+            KeywordRule(
+                pattern=r"\b(refactor|race condition|concurren(t|cy)|deadlock)\b", weight=0.8
+            ),
+            KeywordRule(pattern=r"\b(step[- ]by[- ]step|multi[- ]step|plan out)\b", weight=0.6),
+            KeywordRule(pattern=r"\b(security|vulnerab\w+|exploit)\b", weight=0.7),
+            KeywordRule(pattern=r"\b(optimi[sz]e|complexity|algorithm)\b", weight=0.5),
+        ]
+    )
+    # Schema complexity saturates at this many "units" (properties, nesting, unions).
+    schema_saturation: int = 25
+    # Additive boosts on top of the weighted average.
+    sticky_steps: int = Field(default=3, ge=0)
+    sticky_boost: float = Field(default=0.25, ge=0, le=1)
+    tool_error_boost: float = Field(default=0.2, ge=0, le=1)
+    # Only scan this many chars from each end of the latest user message for keywords.
+    keyword_scan_chars: int = 4000
+    # Reasons list contains features contributing at least this much.
+    reason_min_contribution: float = 0.03
+
+
+class StructuralConfig(_Section):
+    enabled: bool = True
+
+
+class HeuristicConfig(_Section):
+    enabled: bool = True
+    refusal_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"\bI(?:'m| am) (?:not able|unable) to\b",
+            r"\bI can(?:not|'t) (?:help|assist|do that|answer)\b",
+            r"\bI(?:'m| am) not sure\b",
+            r"\bI don't know\b",
+            r"\bas an AI\b",
+        ]
+    )
+    # Minimum answer length (chars) by task_type; "default" for the rest.
+    min_chars: dict[str, int] = Field(
+        default_factory=lambda: {"default": 1, "summarize": 40, "code": 20, "plan": 80}
+    )
+    # Fraction of repeated 6-word shingles above which output counts as looping.
+    repetition_threshold: float = 0.5
+
+
+class ConfidenceConfig(_Section):
+    enabled: bool = True
+    # Mean per-token logprob below this fails (skipped when no logprobs).
+    min_mean_logprob: float = -1.0
+    # Second local sample at higher temperature; disagreement is a soft failure.
+    two_sample: bool = False
+    two_sample_temperature: float = 0.8
+    two_sample_min_similarity: float = 0.4
+
+
+class ExecutionConfig(_Section):
+    enabled: bool = True
+    # Compile Python found in ```python fences (and in code task_types).
+    python_compile: bool = True
+    code_task_types: list[str] = Field(default_factory=lambda: ["code"])
+
+
+class JudgeConfig(_Section):
+    enabled: bool = False
+    tier: Tier = Tier.LOCAL
+    max_tokens: int = 200
+
+
+class ValidatorsConfig(_Section):
+    structural: StructuralConfig = StructuralConfig()
+    heuristic: HeuristicConfig = HeuristicConfig()
+    confidence: ConfidenceConfig = ConfidenceConfig()
+    execution: ExecutionConfig = ExecutionConfig()
+    judge: JudgeConfig = JudgeConfig()
+
+
 class RouterConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tiers: dict[Tier, SerializeAsAny[BackendConfig]]
+    routing: RoutingConfig = RoutingConfig()
+    scorer: RuleScorerConfig = RuleScorerConfig()
+    validators: ValidatorsConfig = ValidatorsConfig()
+
+    def config_hash(self) -> str:
+        """Short stable hash, recorded on every route so changes are traceable."""
+        blob = json.dumps(self.model_dump(mode="json"), sort_keys=True)
+        return hashlib.sha256(blob.encode()).hexdigest()[:12]
 
     @field_validator("tiers", mode="before")
     @classmethod

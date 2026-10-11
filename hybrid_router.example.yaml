@@ -51,3 +51,35 @@ tiers:
     forced_tool_choice: false
     prompt_caching: true
     default_max_tokens: 16000
+
+routing:
+  strategy: hybrid                # hybrid | pre_route | cascade
+  easy_threshold: 0.25            # below: local, streamed, structural checks only
+  hard_threshold: 0.65            # above: skip local
+  opus_threshold: 0.85            # above: Opus instead of Sonnet
+  escalate_hard_to_opus: true     # a hard validator failure on local goes straight to Opus
+  escalation_mode: original       # original | revise (show the cloud model the failed draft)
+  max_attempts: 3
+  pre_route_fallback_on_error: true
+  cloud_retries: 1
+  local_concurrency: 1            # local generations at once
+
+scorer:
+  # score = 1 - prod(1 - weight * feature); each weight in [0, 1]
+  weights: {tokens: 0.6, tools: 0.4, task_type: 0.8, keywords: 0.6, schema: 0.4}
+  tokens_low: 2000                # context size feature ramps from 0 here...
+  tokens_high: 24000              # ...to 1 here
+  tools_saturation: 8
+  task_type_default: 0.4          # unknown/missing task_type
+  # task_types: {classify: 0.05, extract: 0.1, ..., multi_step_reasoning: 0.9}
+  # keywords: [{pattern: '\bprove\b', weight: 1.0}, ...]
+  sticky_steps: 3                 # after an escalation, boost the next N steps...
+  sticky_boost: 0.25              # ...by this much (decaying)
+  tool_error_boost: 0.2           # previous local step's tool call errored
+
+validators:
+  structural: {enabled: true}
+  heuristic: {enabled: true, repetition_threshold: 0.5}
+  confidence: {enabled: true, min_mean_logprob: -1.0, two_sample: false}
+  execution: {enabled: true, python_compile: true}
+  judge: {enabled: false, tier: local}
