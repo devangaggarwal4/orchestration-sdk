@@ -159,6 +159,133 @@ async def _smoke_one(backend: Backend) -> tuple[list[str], list[str]]:
     return cells, problems
 
 
+SinceOpt = Annotated[str, typer.Option(help="Window: 7d, 12h, 30m, 2w or an ISO date")]
+DbOpt = Annotated[Path | None, typer.Option(help="Telemetry DB (default: telemetry.db_path)")]
+JsonFlag = Annotated[bool, typer.Option("--json", help="Print JSON instead of tables")]
+
+
+def _open_db(cfg, db: Path | None):
+    from hybrid_router.telemetry import connect, init_db
+
+    path = Path(db or cfg.telemetry.db_path)
+    if not path.exists():
+        console.print(f"[red]no telemetry database at {path}[/] (route some requests first)")
+        raise typer.Exit(1)
+    conn = connect(path)
+    init_db(conn)
+    return conn
+
+
+@app.command()
+def report(
+    since: SinceOpt = "7d", config: ConfigOpt = None, db: DbOpt = None, as_json: JsonFlag = False
+) -> None:
+    """Local vs cloud split, cost vs all-cloud, zones, escalations, waste, latency."""
+    from hybrid_router.pricing import load_pricing
+    from hybrid_router.reporting import build_report, parse_since, render_report
+    from hybrid_router.reporting.report import report_json
+
+    cfg = load_config(config)
+    rep = build_report(
+        _open_db(cfg, db), parse_since(since), load_pricing(cfg.telemetry.pricing_path)
+    )
+    if as_json:
+        print(report_json(rep))
+    else:
+        render_report(rep, console)
+
+
+@app.command()
+def tune(
+    since: SinceOpt = "30d",
+    config: ConfigOpt = None,
+    db: DbOpt = None,
+    as_json: JsonFlag = False,
+    min_samples: Annotated[int, typer.Option(help="Refuse below this many routes")] = 50,
+) -> None:
+    """Suggest thresholds and weights from telemetry (prints a YAML patch; changes nothing)."""
+    from hybrid_router.reporting import load_routes, parse_since, suggest
+
+    cfg = load_config(config)
+    routes = load_routes(_open_db(cfg, db), parse_since(since))
+    result = suggest(routes, cfg, min_samples=min_samples)
+    if as_json:
+        print(result.model_dump_json(indent=2))
+        return
+    console.print(result.message)
+    if not result.enough_data:
+        raise typer.Exit(0)
+    t = Table(title=f"Local failure rate by score ({result.samples} routes with a local attempt)")
+    for c in ("score", "n", "local failed"):
+        t.add_column(c)
+    for b in result.bins:
+        bar = "█" * round(b.local_fail_rate * 20)
+        t.add_row(f"{b.lo:.2f}-{b.hi:.2f}", str(b.n), f"{b.local_fail_rate:>4.0%} {bar}")
+    console.print(t)
+    if result.auc_current is not None:
+        fitted = f", refit {result.auc_fitted:.2f}" if result.auc_fitted is not None else ""
+        console.print(
+            f"scorer AUC for predicting local failure: current {result.auc_current:.2f}{fitted}"
+        )
+    for s in result.suggestions:
+        console.print(f"\n[bold]{s.param}[/]: {s.current} → [green]{s.suggested}[/]")
+        console.print(f"  {s.rationale}")
+    if result.suggestions:
+        s0 = result.suggestions[0]
+        console.print(
+            f"\nestimated impact of applying all suggestions over this window: "
+            f"latency {(s0.est_latency_delta_ms or 0) / 1000:+.1f}s, "
+            f"cost {s0.est_cost_delta_usd or 0:+.4f} USD, "
+            f"new under-escalation risk {s0.est_new_under_escalations or 0:.1f} routes"
+        )
+        console.print("\n[dim]# add to hybrid_router.yaml after review:[/]")
+        console.print(result.yaml_patch, highlight=False)
+
+
+@app.command()
+def whatif(
+    set_: Annotated[
+        list[str], typer.Option("--set", help="key=value, e.g. routing.hard_threshold=0.5")
+    ],
+    since: SinceOpt = "30d",
+    config: ConfigOpt = None,
+    db: DbOpt = None,
+    as_json: JsonFlag = False,
+) -> None:
+    """Replay recorded routes under changed settings (no model calls)."""
+    import json as _json
+
+    from hybrid_router.reporting import apply_patch, load_routes, parse_since, replay
+
+    cfg = load_config(config)
+    patch: dict = {}
+    for item in set_:
+        key, _, raw = item.partition("=")
+        if not raw:
+            raise typer.BadParameter(f"expected key=value, got {item!r}")
+        node = patch
+        parts = key.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = yaml.safe_load(raw)
+    candidate = apply_patch(cfg, patch)
+    result = replay(load_routes(_open_db(cfg, db), parse_since(since)), cfg, candidate)
+    if as_json:
+        print(_json.dumps(result, indent=2))
+        return
+    console.print(
+        f"{result['routes_changed']} of {result['routes_considered']} hybrid routes would change "
+        f"({result['observed_changes']} observed, {result['estimated_changes']} estimated)"
+    )
+    for k, v in sorted(result["transitions"].items()):
+        console.print(f"  {k}: {v}")
+    console.print(
+        f"latency {result['est_latency_delta_ms'] / 1000:+.1f}s · "
+        f"cost {result['est_cost_delta_usd']:+.4f} USD · "
+        f"new under-escalation risk {result['est_new_under_escalations']:.1f} routes"
+    )
+
+
 @app.command("eval")
 def eval_cmd(
     config: ConfigOpt = None,
